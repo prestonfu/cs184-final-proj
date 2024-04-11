@@ -10,7 +10,7 @@ def plot_point_cloud(
     pc: PointCloud,
     color: bool = True,
     grid_size: int = 1,
-    dot_size: float = 5,
+    dot_size: float = 20,
     fixed_bounds: Optional[Tuple[Tuple[float, float, float], Tuple[float, float, float]]] = (
         (-0.75, -0.75, -0.75),
         (0.75, 0.75, 0.75),
