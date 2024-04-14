@@ -1,0 +1,17 @@
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CMakeFiles/pt31.dir
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CMakeFiles/pathtracer.dir
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CMakeFiles/install.dir
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CMakeFiles/ALL_BUILD.dir
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CMakeFiles/ZERO_CHECK.dir
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CGL/CMakeFiles/CGL.dir
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CGL/CMakeFiles/install.dir
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CGL/CMakeFiles/ALL_BUILD.dir
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CGL/CMakeFiles/ZERO_CHECK.dir
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CGL/deps/glew/CMakeFiles/glew.dir
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CGL/deps/glew/CMakeFiles/install.dir
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CGL/deps/glfw/CMakeFiles/uninstall.dir
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CGL/deps/glfw/CMakeFiles/install.dir
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CGL/deps/glfw/CMakeFiles/ALL_BUILD.dir
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CGL/deps/glfw/CMakeFiles/ZERO_CHECK.dir
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CGL/deps/glfw/src/CMakeFiles/glfw.dir
+/Users/arjundamerla/CS184/hw3-pathtracer-sp24-jungkook/Xcode/CGL/deps/glfw/src/CMakeFiles/install.dir
