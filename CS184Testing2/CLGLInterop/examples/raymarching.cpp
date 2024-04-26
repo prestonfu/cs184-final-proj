@@ -50,8 +50,13 @@ typedef struct {
     Program p;
     Kernel k;
     Buffer i;
+    Kernel kernel_raygen;
+    Buffer ray_pos;
+    Buffer ray_dir;
     size_t dims[3];
 } process_params;
+
+
 
 typedef struct {
     GLuint prg;
@@ -154,9 +159,11 @@ int main(void)
         Context context(params.d, cps);
         // Create a command queue and use the first device
         params.q = CommandQueue(context, params.d);
-        params.p = getProgram(context, ASSETS_DIR"/random.cl", errCode);
+        params.p = getProgram(context, ASSETS_DIR"/raygen.cl", errCode);
         params.p.build(std::vector<Device>(1, params.d));
-        params.k = Kernel(params.p, "random");
+        params.k = Kernel(params.p, "raygen");
+
+
         // create opengl stuff
         rparams.prg = initShaders(ASSETS_DIR"/partsim.vert", ASSETS_DIR"/partsim.frag");
 
@@ -224,11 +231,22 @@ void processTimeStep()
         NDRange local(16);
         NDRange global(16 * divup(params.dims[0], 16));
         // set kernel arguments
+        /*
         params.k.setArg(0,params.i);
         params.k.setArg(1,wind_width);
         params.k.setArg(2,wind_height);
         params.k.setArg(3,std::abs(std::rand()));
         params.q.enqueueNDRangeKernel(params.k,cl::NullRange,global,local);
+
+
+        */
+
+        params.kernel_raygen.setArg(0, width);
+        params.kernel_raygen.setArg(1,height);
+        params.kernel_raygen.setArg(2,camera);
+
+
+        params.q.enqueueNDRangeKernel(params.kernel_raygen, cl::NullRange, global, local);
 
         glFinish();
         std::vector<Memory> objs;
