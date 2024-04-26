@@ -8,11 +8,11 @@
 kernel void calculate(const int n, global float* positions, global float* velocities, global float* accelerations, const float deltaTime)
 {
     int id = get_global_id(0);
-    float2 pos = (float2)(positions[2 * id], positions[2 * id + 1]);
-    float2 vel = (float2)(velocities[2 * id], velocities[2 * id + 1]);
+    float3 pos = (float3)(positions[2 * id], positions[2 * id + 1], 0);
+    float3 vel = (float3)(velocities[3 * id], velocities[3 * id + 1], velocities[3 * id + 2]);
 
-    float2 accel = (float2)(0.0, 0.0);
-    float2 separation = (float2)(0.0, 0.0);
+    float3 accel = (float3)(0.0, 0.0, 0.0);
+    float3 separation = (float3)(0.0, 0.0, 0.0);
     // float2 cohesion = (float2)(0.0, 0.0);
     // float2 alignment = (float2)(0.0, 0.0);
 
@@ -20,10 +20,10 @@ kernel void calculate(const int n, global float* positions, global float* veloci
     {
         if (i == id)
             continue;
-        float2 otherPos = (float2)(positions[2 * i], positions[2 * i + 1]);
+        float3 otherPos = (float3)(positions[2 * i], positions[2 * i + 1], 0);
         float distance = length(pos - otherPos);
         if (distance < RADIUS_SEPARATION) {
-            float2 displacement = pos - otherPos;
+            float3 displacement = pos - otherPos;
             separation += displacement / distance / distance;
         }
         // if (distance < RADIUS_COHESION) {
@@ -32,8 +32,9 @@ kernel void calculate(const int n, global float* positions, global float* veloci
     }
 
     accel += K_SEPARATION * normalize(separation);
-    accelerations[2 * id] = accel.x;
-    accelerations[2 * id + 1] = accel.y;
+    accelerations[3 * id] = accel.x;
+    accelerations[3 * id + 1] = accel.y;
+    accelerations[3 * id + 2] = accel.z;
 }
 
 /*

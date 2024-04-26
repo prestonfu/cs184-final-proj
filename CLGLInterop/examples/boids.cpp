@@ -180,19 +180,21 @@ int main(void)
         std::mt19937 eng(rd());
         std::normal_distribution<> dist(10, 100);
         std::vector<float> data(2*nparticles);
-        std::vector<float> vel(2*nparticles);
-        std::vector<float> accel(2*nparticles);
+        std::vector<float> vel(3*nparticles);
+        std::vector<float> accel(3*nparticles);
         for(int n=0; n<nparticles; ++n) {
             data[2*n+0] = std::fmod(dist(eng), wind_width)/wind_width;
             data[2*n+1] = std::fmod(dist(eng), wind_height)/wind_height;
         }
         for(int n=0; n<nparticles; ++n) {
-            vel[2*n+0] = 0; // TODO: add random direction vector later
-            vel[2*n+1] = 0;
+            vel[3*n+0] = 0; // TODO: add random direction vector later
+            vel[3*n+1] = 0;
+            vel[3*n+2] = 0;
         }
         for(int n=0; n<nparticles; ++n) {
-            accel[2*n+0] = 0; // TODO: add random direction vector later
-            accel[2*n+1] = 0;
+            accel[3*n+0] = 0; // TODO: add random direction vector later
+            accel[3*n+1] = 0;
+            accel[3*n+2] = 0;
         }
 
         rparams.vbo = createBuffer(2*nparticles, data.data(), GL_DYNAMIC_DRAW);
@@ -207,11 +209,11 @@ int main(void)
         glBindVertexArray(0);
         // create opencl input and output buffer
         params.i = Buffer(context, CL_MEM_READ_WRITE, sizeof(float)*2*nparticles);
-        params.v = Buffer(context, CL_MEM_READ_WRITE, sizeof(float)*2*nparticles);
-        params.a = Buffer(context, CL_MEM_READ_WRITE, sizeof(float)*2*nparticles);
+        params.v = Buffer(context, CL_MEM_READ_WRITE, sizeof(float)*3*nparticles);
+        params.a = Buffer(context, CL_MEM_READ_WRITE, sizeof(float)*3*nparticles);
         params.q.enqueueWriteBuffer(params.i, CL_TRUE, 0, sizeof(float)*2*nparticles, data.data());
-        params.q.enqueueWriteBuffer(params.v, CL_TRUE, 0, sizeof(float)*2*nparticles, vel.data());
-        params.q.enqueueWriteBuffer(params.a, CL_TRUE, 0, sizeof(float)*2*nparticles, accel.data());
+        params.q.enqueueWriteBuffer(params.v, CL_TRUE, 0, sizeof(float)*3*nparticles, vel.data());
+        params.q.enqueueWriteBuffer(params.a, CL_TRUE, 0, sizeof(float)*3*nparticles, accel.data());
         params.dims[0] = nparticles;
         params.dims[1] = 1;
         params.dims[2] = 1;

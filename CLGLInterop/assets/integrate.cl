@@ -4,9 +4,9 @@
 kernel void integrate(const int n, global float* positions, global float* velocities, global float* accelerations, const float deltaTime)
 {
     int id = get_global_id(0);
-    float2 pos = (float2)(positions[2 * id], positions[2 * id + 1]);
-    float2 vel = (float2)(velocities[2 * id], velocities[2 * id + 1]);
-    float2 accel = (float2)(accelerations[2 * id], accelerations[2 * id + 1]);
+    float3 pos = (float3)(positions[2 * id], positions[2 * id + 1], 0);
+    float3 vel = (float3)(velocities[3 * id], velocities[3 * id + 1], velocities[3 * id + 2]);
+    float3 accel = (float3)(accelerations[3 * id], accelerations[3 * id + 1], accelerations[3 * id + 2]);
     if (length(accel) > MAX_ACCEL)
     {
         accel *= MAX_ACCEL / length(accel);
@@ -20,10 +20,12 @@ kernel void integrate(const int n, global float* positions, global float* veloci
     
     positions[2 * id] = pos.x;
     positions[2 * id + 1] = pos.y;
-    velocities[2 * id] = vel.x;
-    velocities[2 * id + 1] = vel.y;
-    accelerations[2 * id] = accel.x;
-    accelerations[2 * id + 1] = accel.y;
+    velocities[3 * id] = vel.x;
+    velocities[3 * id + 1] = vel.y;
+    velocities[3 * id + 2] = vel.z;
+    accelerations[3 * id] = accel.x;
+    accelerations[3 * id + 1] = accel.y;
+    accelerations[3 * id + 2] = accel.z;
 }
 
 /*
