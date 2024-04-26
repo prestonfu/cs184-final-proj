@@ -1,0 +1,6 @@
+/Users/arjundamerla/cs184-final-proj/CS184Testing2/CLGLInterop/build/CMakeFiles/julia.dir
+/Users/arjundamerla/cs184-final-proj/CS184Testing2/CLGLInterop/build/CMakeFiles/partsim.dir
+/Users/arjundamerla/cs184-final-proj/CS184Testing2/CLGLInterop/build/CMakeFiles/edit_cache.dir
+/Users/arjundamerla/cs184-final-proj/CS184Testing2/CLGLInterop/build/CMakeFiles/rebuild_cache.dir
+/Users/arjundamerla/cs184-final-proj/CS184Testing2/CLGLInterop/build/external_sources/glad/CMakeFiles/edit_cache.dir
+/Users/arjundamerla/cs184-final-proj/CS184Testing2/CLGLInterop/build/external_sources/glad/CMakeFiles/rebuild_cache.dir
