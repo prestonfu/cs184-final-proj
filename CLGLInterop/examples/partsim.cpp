@@ -1,7 +1,11 @@
 #include <glad/glad.h>
 
 #include <common/OpenCLUtil.h>
+#ifdef __APPLE__
 #include <OpenGL/OpenGL.h>
+#else
+#include <GL/gl.h>
+#endif
 
 #ifdef OS_WIN
 #define GLFW_EXPOSE_NATIVE_WIN32

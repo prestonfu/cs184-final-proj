@@ -1,5 +1,9 @@
 #include <glad/glad.h>
+#ifdef __APPLE__
 #include <OpenGL/OpenGL.h>
+#else
+#include <GL/gl.h>
+#endif
 
 #include <common/OpenCLUtil.h>
 
