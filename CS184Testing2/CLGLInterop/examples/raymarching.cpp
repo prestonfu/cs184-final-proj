@@ -31,6 +31,8 @@
 using namespace std;
 using namespace cl;
 
+#define EPS_F (0.00001f)
+
 typedef unsigned int uint;
 
 static const uint NUM_JSETS = 9;
@@ -98,10 +100,82 @@ typedef struct {
     GLuint tex;
 } render_params;
 
+typedef struct {
+    float cameraPos[3];
+    float targetPos[3];
+    float hFov;
+    float vFov;
+    float phi;
+    float theta;
+    float r;
+    float c2w[9];
+    float screenDist;
+} camera;
+
 process_params params;
 render_params rparams;
+camera cam;
 
-float c2w[9];
+void setScreenSize(int width, int height)
+{
+    // resize buffers and stuff
+}
+
+void computeCameraPosition()
+{
+    float sinPhi = sin(cam.phi);
+    if (sinPhi == 0) {
+        cam.phi += EPS_F;
+        sinPhi = sin(cam.phi);
+    }
+    float dirToCamera[3] = {cam.r * sinPhi * sin(cam.theta),
+                            cam.r * cos(cam.phi),
+                            cam.r * sinPhi * cos(cam.theta)};
+
+    for (int i = 0; i < 3; i++)
+    {
+        cam.cameraPos[i] = cam.targetPos[i] + dirToCamera[i];
+        params.cameraPos.s[i] = cam.cameraPos[i];
+    }
+    float upVec[3] = {0.0f, sinPhi > 0 ? 1.0f : -1.0f, 0.0f};
+    float* c2w = cam.c2w;
+
+    // Column 0 = cross(upVec, dirToCamera);
+    c2w[0] = upVec[1] * dirToCamera[2] - upVec[2] * dirToCamera[1];
+    c2w[3] = upVec[2] * dirToCamera[0] - upVec[0] * dirToCamera[2];
+    c2w[6] = upVec[0] * dirToCamera[1] - upVec[1] * dirToCamera[0];
+    float norm = sqrt(c2w[0] * c2w[0] + c2w[3] * c2w[3] + c2w[6] * c2w[6]);
+    c2w[0] /= norm; c2w[3] /= norm; c2w[6] /= norm;
+
+    // Column 1 = cross(dirToCamera, column 0)
+    c2w[1] = dirToCamera[1] * c2w[6] - dirToCamera[2] * c2w[3];
+    c2w[4] = dirToCamera[2] * c2w[0] - dirToCamera[0] * c2w[6];
+    c2w[7] = dirToCamera[0] * c2w[3] - dirToCamera[1] * c2w[0];
+    norm = sqrt(c2w[1] * c2w[1] + c2w[4] * c2w[4] + c2w[7] * c2w[7]);
+    c2w[1] /= norm; c2w[4] /= norm; c2w[7] /= norm;
+
+    norm = sqrt(dirToCamera[0] * dirToCamera[0] + dirToCamera[1] * dirToCamera[1] + dirToCamera[2] * dirToCamera[2]);
+    c2w[2] = dirToCamera[0] / norm;
+    c2w[5] = dirToCamera[1] / norm;
+    c2w[8] = dirToCamera[2] / norm;
+
+    cout << "upvec" << endl;
+    cout << upVec[0] << " " << upVec[1] << " " << upVec[2] << endl;
+
+    cout << "c2w" << endl;
+    for (int i = 0; i < 3; i++)
+    {
+        for (int j = 0; j < 3; j++)
+        {
+            cout << c2w[3 * i + j] << " ";
+        }
+        cout << endl;
+    }
+    cout << "Camera pos" << endl;
+    for (int i = 0; i < 3; i++)
+        cout << cam.cameraPos[i] << " ";
+    cout << endl;
+}
 
 static void glfw_error_callback(int error, const char* desc)
 {
@@ -137,13 +211,27 @@ static void glfw_key_callback(GLFWwindow* wind, int key, int scancode, int actio
 static void glfw_framebuffer_size_callback(GLFWwindow* wind, int width, int height)
 {
     glViewport(0,0,width,height);
+    setScreenSize(width, height);
+    //wind_width = width;
+    //wind_height = height;
 }
 
 void processTimeStep(void);
 void renderFrame(void);
 
+inline float radians(float angle)
+{
+    return angle * M_PI / 180;
+}
+
+inline float degrees(float radians)
+{
+    return radians * 180 / M_PI;
+}
+
 int main()
 {
+    
     if (!glfwInit())
         return 255;
 
@@ -226,13 +314,16 @@ int main()
         Context context(params.d, cps);
         // Create a command queue and use the first device
         params.q = CommandQueue(context, params.d);
+        
         params.p = getProgram(context, ASSETS_DIR "/raytrace.cl",errCode);
 
         std::ostringstream options;
         options << "-I " << std::string(ASSETS_DIR);
 
         params.p.build(std::vector<Device>(1, params.d), options.str().c_str());
-        params.k = Kernel(params.p, "raytrace");
+        //cl_int err;
+        params.k = Kernel(params.p, "raytrace", &errCode);
+        //cout << err << endl;
         // create opengl stuff
         rparams.prg = initShaders(ASSETS_DIR "/fractal.vert", ASSETS_DIR "/fractal.frag");
         rparams.tex = createTexture2D(wind_width,wind_height);
@@ -263,10 +354,35 @@ int main()
             std::cout<<"Failed to create OpenGL texture reference: "<<errCode<<std::endl;
             return 250;
         }
-        params.cameraPos = {1, 0, 0};
+
+        // Initial camera params
+        cam.targetPos[0] = cam.targetPos[1] = cam.targetPos[2] = 0;
+        cam.theta = 0;
+        cam.phi = M_PI / 2;
+        cam.r = 3;
+        cam.hFov = 50;
+        cam.vFov = 35;
+        cam.screenDist = 1;
+
+        // Configure camera
+        float ar1 = tan(radians(cam.hFov) / 2) / tan(radians(cam.vFov) / 2);
+        float ar = static_cast<double>(wind_width) / wind_height;
+        if (ar1 < ar)
+        {
+            // hFov is too small
+            cam.hFov = 2 * degrees(atan(tan(radians(cam.vFov) / 2) * ar));
+        }
+        else if (ar1 > ar)
+        {
+            // vFov is too small
+            cam.vFov = 2 * degrees(atan(tan(radians(cam.hFov) / 2) / ar));
+        }
+        cam.screenDist = ((double) wind_height) / (2.0 * tan(radians(cam.vFov) / 2));
+
+        computeCameraPosition();
         
         params.c2w = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 9);
-        params.q.enqueueWriteBuffer(params.c2w, CL_TRUE, 0, sizeof(float) * 9, c2w);
+        params.q.enqueueWriteBuffer(params.c2w, CL_TRUE, 0, sizeof(float) * 9, cam.c2w);
 
         std::vector<int> seed(wind_width * wind_height);
         for (int i = 0; i < wind_width * wind_height; i++)
@@ -340,10 +456,12 @@ void processTimeStep()
         params.k.setArg(0, params.tex);
         params.k.setArg(1, (uint)params.dims[0]);
         params.k.setArg(2, (uint)params.dims[1]);
-        params.k.setArg(3, params.cameraPos);
-        params.k.setArg(4, params.c2w);
-        params.k.setArg(5, params.spheres);
-        params.k.setArg(6, params.seed);
+        params.k.setArg(3, cam.hFov);
+        params.k.setArg(4, cam.vFov);
+        params.k.setArg(5, params.cameraPos);
+        params.k.setArg(6, params.c2w);
+        params.k.setArg(7, params.spheres);
+        params.k.setArg(8, params.seed);
         params.q.enqueueNDRangeKernel(params.k, cl::NullRange, global, local);
         // release opengl object
         res = params.q.enqueueReleaseGLObjects(&objs);
