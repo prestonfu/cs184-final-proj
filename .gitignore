@@ -43,3 +43,4 @@ CMakeSettings.json
 *.app
 build
 xcode
+.vscode
