@@ -41,5 +41,5 @@ CMakeSettings.json
 *.exe
 *.out
 *.app
-build
+build/
 xcode
