@@ -26,6 +26,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <cmath>
 #include <string>
 
 using namespace std;

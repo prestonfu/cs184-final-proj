@@ -1,7 +1,6 @@
 #include <glad/glad.h>
 
 #include <common/OpenCLUtil.h>
-#include <OpenGL/OpenGL.h>
 //#include "CGL/vector3D.h"
 
 #ifdef OS_WIN
@@ -10,8 +9,11 @@
 #endif
 
 #ifdef OS_LNX
+#include <GL/gl.h>
 #define GLFW_EXPOSE_NATIVE_X11
 #define GLFW_EXPOSE_NATIVE_GLX
+#else
+#include <OpenGL/OpenGL.h>
 #endif
 
 #include <GLFW/glfw3.h>
