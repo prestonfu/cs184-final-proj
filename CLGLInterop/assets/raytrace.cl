@@ -1,5 +1,5 @@
-#define SPHERE_RADIUS 0.1
-#define SPHERE_COUNT 20
+#define SPHERE_RADIUS 0.01
+#define SPHERE_COUNT 400
 #define MIN_THRESHOLD (0.00001f)
 #define MAX_THRESHOLD 100
 #define NUM_ITERATIONS 100
@@ -17,8 +17,8 @@
 
 #define GLOBAL_ILLUMINATION (float3)(0.1, 0.1, 0.1)
 
-#define NUM_RAYS 4
-#define LIGHT_SAMPLES 4
+#define NUM_RAYS 1
+#define LIGHT_SAMPLES 1
 
 #define EPS_F (0.00001f)
 

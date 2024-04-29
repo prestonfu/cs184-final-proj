@@ -28,6 +28,10 @@
 #include <sstream>
 #include <cmath>
 #include <string>
+#include <map>
+#include <vector>
+
+#include <common/read_npz.h>
 
 using namespace std;
 using namespace cl;
@@ -79,6 +83,8 @@ static const float CJULIA[] = {
      0.279f, 0.000f
 };
 
+static map<string, std::vector<float>> pointClouds;
+
 static int wind_width = 640;
 static int wind_height= 480;
 static int const nparticles = 4096;
@@ -123,6 +129,17 @@ process_params params;
 render_params rparams;
 camera_state cam;
 mouse_state mouse;
+
+void loadPointCloud(string name)
+{
+    if (pointClouds.count(name) == 0)
+    {
+        cout << name << " not found" << endl;
+        return;
+    }
+    cout << name << " loaded" << endl;
+    params.q.enqueueWriteBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, pointClouds[name].data());
+}
 
 void setScreenSize(int width, int height)
 {
@@ -277,7 +294,6 @@ inline float degrees(float radians)
 
 int main()
 {
-    
     if (!glfwInit())
         return 255;
 
@@ -317,6 +333,9 @@ int main()
     }
     printf("OpenGL %d.%d\n", GLVersion.major, GLVersion.minor);
 
+    // Load point clouds
+    pointClouds = read_files("/../assets/point-cloud-300M");
+
     cl_int errCode;
     try {
         Platform lPlatform = getPlatform();
@@ -343,9 +362,9 @@ int main()
         CGLShareGroupObj  kCGLShareGroup  = CGLGetShareGroup(kCGLContext);
 
         cl_context_properties cps[] = {
-        CL_CONTEXT_PROPERTY_USE_CGL_SHAREGROUP_APPLE,
-        (cl_context_properties) kCGLShareGroup,
-        0
+            CL_CONTEXT_PROPERTY_USE_CGL_SHAREGROUP_APPLE,
+            (cl_context_properties) kCGLShareGroup,
+            0
         };
 #endif
         std::vector<Device> devices;
@@ -433,14 +452,15 @@ int main()
         params.seed = Buffer(context, CL_MEM_READ_WRITE, sizeof(int) * wind_width * wind_height);
         params.q.enqueueWriteBuffer(params.seed, CL_TRUE, 0, sizeof(int) * wind_width * wind_height, seed.data());
 
-        std::vector<float> spheres(3 * nparticles);
-        for (int i = 0; i < 3 * nparticles; i++)
-        {
-            spheres[i] = 0;
-        }
-        spheres[3] = 0.5;
+        // std::vector<float> spheres(3 * nparticles);
+        // for (int i = 0; i < 3 * nparticles; i++)
+        // {
+        //     spheres[i] = 0;
+        // }
+        // spheres[3] = 0.5;
         params.spheres = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 3 * nparticles);
-        params.q.enqueueWriteBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
+        loadPointCloud("shrek");
+        //params.q.enqueueWriteBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
 
         params.dims[0] = wind_width;
         params.dims[1] = wind_height;
