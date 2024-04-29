@@ -1,7 +1,7 @@
 #include <glad/glad.h>
-#include <OpenGL/OpenGL.h>
 
 #include <common/OpenCLUtil.h>
+//#include "CGL/vector3D.h"
 
 #ifdef OS_WIN
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -9,8 +9,11 @@
 #endif
 
 #ifdef OS_LNX
+#include <GL/gl.h>
 #define GLFW_EXPOSE_NATIVE_X11
 #define GLFW_EXPOSE_NATIVE_GLX
+#else
+#include <OpenGL/OpenGL.h>
 #endif
 
 #include <GLFW/glfw3.h>
@@ -23,70 +26,40 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <random>
+#include <cmath>
+#include <algorithm>
 
 using namespace std;
 using namespace cl;
 
 typedef unsigned int uint;
 
-static const uint NUM_JSETS = 9;
+static int const wind_width = 640;
+static int const wind_height= 480;
+static float const percent  = 0.02;
+static int const nparticles = percent * wind_width * wind_height;
 
-static const float matrix[16] =
-{
+static const float matrix[16] = {
     1.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f,
     0.0f, 0.0f, 1.0f, 0.0f,
-    0.0f, 0.0f, 0.0f, 1.0f
-};
-
-static const float vertices[12] =
-{
-    -1.0f,-1.0f, 0.0,
-     1.0f,-1.0f, 0.0,
-     1.0f, 1.0f, 0.0,
-    -1.0f, 1.0f, 0.0
-};
-
-static const float texcords[8] =
-{
-    0.0, 1.0,
-    1.0, 1.0,
-    1.0, 0.0,
-    0.0, 0.0
-};
-
-static const uint indices[6] = {0,1,2,0,2,3};
-
-static const float CJULIA[] = {
-    -0.700f, 0.270f,
-    -0.618f, 0.000f,
-    -0.400f, 0.600f,
-     0.285f, 0.000f,
-     0.285f, 0.010f,
-     0.450f, 0.143f,
-    -0.702f,-0.384f,
-    -0.835f,-0.232f,
-    -0.800f, 0.156f,
-     0.279f, 0.000f
-};
-
-static int wind_width = 720;
-static int wind_height= 720;
-static int gJuliaSetIndex = 0;
+    0.0f, 0.0f, 0.0f, 1.0f};
 
 typedef struct {
     Device d;
     CommandQueue q;
     Program p;
     Kernel k;
-    ImageGL tex;
+    Buffer i;
     size_t dims[3];
 } process_params;
 
 typedef struct {
     GLuint prg;
     GLuint vao;
-    GLuint tex;
+    GLuint vbo;
+    BufferGL tmp;
 } render_params;
 
 process_params params;
@@ -99,27 +72,8 @@ static void glfw_error_callback(int error, const char* desc)
 
 static void glfw_key_callback(GLFWwindow* wind, int key, int scancode, int action, int mods)
 {
-    if (action == GLFW_PRESS) {
-        if (key == GLFW_KEY_ESCAPE)
-            glfwSetWindowShouldClose(wind, GL_TRUE);
-        else if (key == GLFW_KEY_1)
-            gJuliaSetIndex = 0;
-        else if (key == GLFW_KEY_2)
-            gJuliaSetIndex = 1;
-        else if (key == GLFW_KEY_3)
-            gJuliaSetIndex = 2;
-        else if (key == GLFW_KEY_4)
-            gJuliaSetIndex = 3;
-        else if (key == GLFW_KEY_5)
-            gJuliaSetIndex = 4;
-        else if (key == GLFW_KEY_6)
-            gJuliaSetIndex = 5;
-        else if (key == GLFW_KEY_7)
-            gJuliaSetIndex = 6;
-        else if (key == GLFW_KEY_8)
-            gJuliaSetIndex = 7;
-        else if (key == GLFW_KEY_9)
-            gJuliaSetIndex = 8;
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+        glfwSetWindowShouldClose(wind, GL_TRUE);
     }
 }
 
@@ -131,13 +85,12 @@ static void glfw_framebuffer_size_callback(GLFWwindow* wind, int width, int heig
 void processTimeStep(void);
 void renderFrame(void);
 
-int main()
+int main(void)
 {
+    GLFWwindow* window;
+
     if (!glfwInit())
         return 255;
-
-    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
-    const GLFWvidmode* mode    = glfwGetVideoMode(monitor);
 
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
@@ -145,27 +98,15 @@ int main()
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 
-    glfwWindowHint(GLFW_RED_BITS    , mode->redBits    );
-    glfwWindowHint(GLFW_GREEN_BITS  , mode->greenBits  );
-    glfwWindowHint(GLFW_BLUE_BITS   , mode->blueBits   );
-    glfwWindowHint(GLFW_REFRESH_RATE, mode->refreshRate);
-
-    //wind_width  = mode->width;
-    //wind_height = mode->height;
-
-    GLFWwindow* window;
-
     glfwSetErrorCallback(glfw_error_callback);
 
-    window = glfwCreateWindow(wind_width,wind_height,"Julia Sets",NULL,NULL);
-    //window = glfwCreateWindow(wind_width,wind_height,"Julia Sets",monitor,NULL);
+    window = glfwCreateWindow(wind_width,wind_height,"Random particles",NULL,NULL);
     if (!window) {
         glfwTerminate();
         return 254;
     }
 
     glfwMakeContextCurrent(window);
-
     if(!gladLoadGL()) {
         printf("gladLoadGL failed!\n");
         return 253;
@@ -193,7 +134,7 @@ int main()
         };
 #endif
 
-#ifdef __APPLE__
+        #ifdef __APPLE__
     CGLContextObj     kCGLContext     = CGLGetCurrentContext();
     CGLShareGroupObj  kCGLShareGroup  = CGLGetShareGroup(kCGLContext);
 
@@ -215,45 +156,36 @@ int main()
         Context context(params.d, cps);
         // Create a command queue and use the first device
         params.q = CommandQueue(context, params.d);
-        params.p = getProgram(context, ASSETS_DIR "/fractal.cl",errCode);
-
-        std::ostringstream options;
-        options << "-I " << std::string(ASSETS_DIR);
-
-        params.p.build(std::vector<Device>(1, params.d), options.str().c_str());
-        params.k = Kernel(params.p, "fractal");
+        params.p = getProgram(context, ASSETS_DIR"/random.cl", errCode);
+        params.p.build(std::vector<Device>(1, params.d));
+        params.k = Kernel(params.p, "random");
         // create opengl stuff
-        rparams.prg = initShaders(ASSETS_DIR "/fractal.vert", ASSETS_DIR "/fractal.frag");
-        rparams.tex = createTexture2D(wind_width,wind_height);
-        GLuint vbo  = createBuffer(12,vertices,GL_STATIC_DRAW);
-        GLuint tbo  = createBuffer(8,texcords,GL_STATIC_DRAW);
-        GLuint ibo;
-        glGenBuffers(1,&ibo);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER,sizeof(uint)*6,indices,GL_STATIC_DRAW);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,0);
+        rparams.prg = initShaders(ASSETS_DIR"/partsim.vert", ASSETS_DIR"/partsim.frag");
+
+        std::random_device rd;
+        std::mt19937 eng(rd());
+        std::normal_distribution<> dist(10, 100);
+        std::vector<float> data(2*nparticles);
+        for(int n=0; n<nparticles; ++n) {
+            data[2*n+0] = std::fmod(dist(eng), wind_width)/wind_width;
+            data[2*n+1] = std::fmod(dist(eng), wind_height)/wind_height;
+        }
+
+        rparams.vbo = createBuffer(2*nparticles, data.data(), GL_DYNAMIC_DRAW);
+        rparams.tmp = BufferGL(context, CL_MEM_READ_WRITE, rparams.vbo, NULL);
         // bind vao
         glGenVertexArrays(1,&rparams.vao);
         glBindVertexArray(rparams.vao);
         // attach vbo
-        glBindBuffer(GL_ARRAY_BUFFER,vbo);
-        glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,0,NULL);
+        glBindBuffer(GL_ARRAY_BUFFER,rparams.vbo);
+        glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,0,NULL);
         glEnableVertexAttribArray(0);
-        // attach tbo
-        glBindBuffer(GL_ARRAY_BUFFER,tbo);
-        glVertexAttribPointer(1,2,GL_FLOAT,GL_FALSE,0,NULL);
-        glEnableVertexAttribArray(1);
-        // attach ibo
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,ibo);
         glBindVertexArray(0);
-        // create opengl texture reference using opengl texture
-        params.tex = ImageGL(context,CL_MEM_READ_WRITE,GL_TEXTURE_2D,0,rparams.tex,&errCode);
-        if (errCode!=CL_SUCCESS) {
-            std::cout<<"Failed to create OpenGL texture refrence: "<<errCode<<std::endl;
-            return 250;
-        }
-        params.dims[0] = wind_width;
-        params.dims[1] = wind_height;
+        // create opencl input and output buffer
+        params.i = Buffer(context, CL_MEM_READ_WRITE, sizeof(float)*2*nparticles);
+        params.q.enqueueWriteBuffer(params.i, CL_TRUE, 0, sizeof(float)*2*nparticles, data.data());
+        params.dims[0] = nparticles;
+        params.dims[1] = 1;
         params.dims[2] = 1;
     } catch(Error error) {
         std::cout << error.what() << "(" << error.err() << ")" << std::endl;
@@ -291,11 +223,19 @@ void processTimeStep()
 {
     cl::Event ev;
     try {
-        glFinish();
+        NDRange local(16);
+        NDRange global(16 * divup(params.dims[0], 16));
+        // set kernel arguments
+        params.k.setArg(0,params.i);
+        params.k.setArg(1,wind_width);
+        params.k.setArg(2,wind_height);
+        params.k.setArg(3,std::abs(std::rand()));
+        params.q.enqueueNDRangeKernel(params.k,cl::NullRange,global,local);
 
+        glFinish();
         std::vector<Memory> objs;
         objs.clear();
-        objs.push_back(params.tex);
+        objs.push_back(rparams.tmp);
         // flush opengl commands and wait for object acquisition
         cl_int res = params.q.enqueueAcquireGLObjects(&objs,NULL,&ev);
         ev.wait();
@@ -303,20 +243,7 @@ void processTimeStep()
             std::cout<<"Failed acquiring GL object: "<<res<<std::endl;
             exit(248);
         }
-        NDRange local(16, 16);
-        NDRange global( local[0] * divup(params.dims[0], local[0]),
-                        local[1] * divup(params.dims[1], local[1]));
-        // set kernel arguments
-        params.k.setArg(0, params.tex);
-        params.k.setArg(1, (int)params.dims[0]);
-        params.k.setArg(2, (int)params.dims[1]);
-        params.k.setArg(3, 1.0f);
-        params.k.setArg(4, 1.0f);
-        params.k.setArg(5, 0.0f);
-        params.k.setArg(6, 0.0f);
-        params.k.setArg(7, CJULIA[2*gJuliaSetIndex+0]);
-        params.k.setArg(8, CJULIA[2*gJuliaSetIndex+1]);
-        params.q.enqueueNDRangeKernel(params.k,cl::NullRange, global, local);
+        params.q.enqueueCopyBuffer(params.i, rparams.tmp, 0, 0, 2*nparticles*sizeof(float), NULL, NULL);
         // release opengl object
         res = params.q.enqueueReleaseGLObjects(&objs);
         ev.wait();
@@ -332,23 +259,21 @@ void processTimeStep()
 
 void renderFrame()
 {
+    static const float pcolor[4] = {1.0, 0.0, 0.0, 1.0};
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glClearColor(0.2,0.2,0.2,0.0);
+    glClearColor(0.2,0.2,0.2,1.0);
     glEnable(GL_DEPTH_TEST);
     // bind shader
     glUseProgram(rparams.prg);
     // get uniform locations
     int mat_loc = glGetUniformLocation(rparams.prg,"matrix");
-    int tex_loc = glGetUniformLocation(rparams.prg,"tex");
-    // bind texture
-    glActiveTexture(GL_TEXTURE0);
-    glUniform1i(tex_loc,0);
-    glBindTexture(GL_TEXTURE_2D,rparams.tex);
-    glGenerateMipmap(GL_TEXTURE_2D);
+    int col_loc = glGetUniformLocation(rparams.prg,"color");
     // set project matrix
     glUniformMatrix4fv(mat_loc,1,GL_FALSE,matrix);
+    glUniform4fv(col_loc,1,pcolor);
     // now render stuff
+    glPointSize(4);
     glBindVertexArray(rparams.vao);
-    glDrawElements(GL_TRIANGLES,6,GL_UNSIGNED_INT,0);
+    glDrawArrays(GL_POINTS,0,nparticles);
     glBindVertexArray(0);
 }
