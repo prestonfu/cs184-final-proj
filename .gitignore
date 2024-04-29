@@ -45,3 +45,5 @@ CMakeSettings.json
 build
 xcode
 .vscode
+
+CLGLInterop/assets/point-cloud-*

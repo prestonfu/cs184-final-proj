@@ -5,19 +5,19 @@
 #include <unistd.h>
 #include <common/cnpy.h>
 
-#define PATH_MAX 4096
+#define PATH_MAXX 4096
 #define NUM_POINTS 4096
 #define NUM_FEATURES 6
 
 // todo: fix code so that images don't get copied unnecessarily
 
 std::vector<std::string> get_files_in_symlink(const std::string& relative_path) {
-    char buff[PATH_MAX];
-    getcwd(buff, PATH_MAX);
+    char buff[PATH_MAXX];
+    getcwd(buff, PATH_MAXX);
     std::string symlink_path(buff);
     symlink_path += relative_path;
 
-    char resolved_path[PATH_MAX];
+    char resolved_path[PATH_MAXX];
     if (realpath(symlink_path.c_str(), resolved_path) == nullptr) {
         throw std::runtime_error("Error resolving symbolic link: " + symlink_path);
     }
