@@ -1,22 +1,24 @@
-#define SPHERE_RADIUS 0.3
-#define SPHERE_COUNT 1
+#define SPHERE_RADIUS 0.1
+#define SPHERE_COUNT 2
 #define MIN_THRESHOLD (0.00001f)
 #define MAX_THRESHOLD 100
 #define NUM_ITERATIONS 100
 
 #define NCLIP 0
-#define FCLIP 3
+#define FCLIP 5
 
 #define DIFFUSE_BSDF (float3)(1, 1, 1) //includes color
 #define AREA_LIGHT_POS (float3)(0, 2, 0)
 #define AREA_LIGHT_DIR (float3)(0, -1, 0)
-#define AREA_LIGHT_DIMX (float3)(1, 0, 0)
-#define AREA_LIGHT_DIMY (float3)(0, 0, 1)
-#define AREA_LIGHT_AREA 1 //make sure this matches dimx * dimy
+#define AREA_LIGHT_DIMX (float3)(2, 0, 0)
+#define AREA_LIGHT_DIMY (float3)(0, 0, 2)
+#define AREA_LIGHT_AREA 4 //make sure this matches dimx * dimy
 #define AREA_LIGHT_RADIANCE (float3)(1, 1, 1)
 
-#define NUM_RAYS 8
-#define LIGHT_SAMPLES 8
+#define GLOBAL_ILLUMINATION (float3)(0.1, 0.1, 0.1)
+
+#define NUM_RAYS 4
+#define LIGHT_SAMPLES 4
 
 #define EPS_F (0.00001f)
 
@@ -63,7 +65,7 @@ kernel void raytrace
     for (int i = 0; i < NUM_RAYS; i++)
     {
         float x = (xi + randf(seed)) / width;
-        float y = (yi + randf(seed)) / height;
+        float y = 1 - (yi + randf(seed)) / height;
         float3 vec = (float3)(2 * (x - 0.5) * tan(0.5 * hFov * M_PI / 180), 2 * (y - 0.5) * tan(0.5 * vFov * M_PI / 180), -1);
         float3 res = vec.x * c2w_0 + vec.y * c2w_1 + vec.z * c2w_2;
 
@@ -135,8 +137,11 @@ kernel void raytrace
                 // Intersection temp = intersect(ray, spheres);
                 // if (temp.hit)
                 //     continue;
+                if (dot(wi, isect.n) < 0)
+                    continue;
                 radiance += DIFFUSE_BSDF * rad * dot(wi, isect.n) / pdf / LIGHT_SAMPLES;
             }
+            radiance += GLOBAL_ILLUMINATION;
         }
     }
     radiance /= NUM_RAYS;

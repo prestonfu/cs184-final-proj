@@ -32,6 +32,8 @@ using namespace std;
 using namespace cl;
 
 #define EPS_F (0.00001f)
+#define MIN_R (0.1f)
+#define MAX_R (5.0f)
 
 typedef unsigned int uint;
 
@@ -101,20 +103,27 @@ typedef struct {
 } render_params;
 
 typedef struct {
-    float cameraPos[3];
+    //float cameraPos[3];
     float targetPos[3];
     float hFov;
     float vFov;
     float phi;
     float theta;
     float r;
-    float c2w[9];
+    //float c2w[9];
     float screenDist;
-} camera;
+} camera_state;
+
+typedef struct {
+    float x;
+    float y;
+    bool pressed; //left mouse button only
+} mouse_state;
 
 process_params params;
 render_params rparams;
-camera cam;
+camera_state cam;
+mouse_state mouse;
 
 void setScreenSize(int width, int height)
 {
@@ -134,11 +143,11 @@ void computeCameraPosition()
 
     for (int i = 0; i < 3; i++)
     {
-        cam.cameraPos[i] = cam.targetPos[i] + dirToCamera[i];
-        params.cameraPos.s[i] = cam.cameraPos[i];
+        //cam.cameraPos[i] = cam.targetPos[i] + dirToCamera[i];
+        params.cameraPos.s[i] = cam.targetPos[i] + dirToCamera[i];//cam.cameraPos[i];
     }
     float upVec[3] = {0.0f, sinPhi > 0 ? 1.0f : -1.0f, 0.0f};
-    float* c2w = cam.c2w;
+    float c2w[9];
 
     // Column 0 = cross(upVec, dirToCamera);
     c2w[0] = upVec[1] * dirToCamera[2] - upVec[2] * dirToCamera[1];
@@ -154,32 +163,71 @@ void computeCameraPosition()
     norm = sqrt(c2w[1] * c2w[1] + c2w[4] * c2w[4] + c2w[7] * c2w[7]);
     c2w[1] /= norm; c2w[4] /= norm; c2w[7] /= norm;
 
+    // Column 2 = normalize(dirToCamera)
     norm = sqrt(dirToCamera[0] * dirToCamera[0] + dirToCamera[1] * dirToCamera[1] + dirToCamera[2] * dirToCamera[2]);
     c2w[2] = dirToCamera[0] / norm;
     c2w[5] = dirToCamera[1] / norm;
     c2w[8] = dirToCamera[2] / norm;
 
-    cout << "upvec" << endl;
-    cout << upVec[0] << " " << upVec[1] << " " << upVec[2] << endl;
+    params.q.enqueueWriteBuffer(params.c2w, CL_TRUE, 0, sizeof(float) * 9, c2w);
 
-    cout << "c2w" << endl;
-    for (int i = 0; i < 3; i++)
-    {
-        for (int j = 0; j < 3; j++)
-        {
-            cout << c2w[3 * i + j] << " ";
-        }
-        cout << endl;
-    }
-    cout << "Camera pos" << endl;
-    for (int i = 0; i < 3; i++)
-        cout << cam.cameraPos[i] << " ";
-    cout << endl;
+    // cout << "upvec" << endl;
+    // cout << upVec[0] << " " << upVec[1] << " " << upVec[2] << endl;
+
+    // cout << "c2w" << endl;
+    // for (int i = 0; i < 3; i++)
+    // {
+    //     for (int j = 0; j < 3; j++)
+    //     {
+    //         cout << c2w[3 * i + j] << " ";
+    //     }
+    //     cout << endl;
+    // }
+    // cout << "Camera pos" << endl;
+    // for (int i = 0; i < 3; i++)
+    //     cout << params.cameraPos.s[i] << " ";
+    // cout << endl;
 }
+
 
 static void glfw_error_callback(int error, const char* desc)
 {
     fputs(desc,stderr);
+}
+
+static void glfw_cursor_position_callback(GLFWwindow* wind, double x, double y)
+{
+    if (mouse.pressed)
+    {
+        float dx = x - mouse.x;
+        float dy = y - mouse.y;
+        float dPhi = -dy * (M_PI / wind_height);
+        float dTheta = -dx * (M_PI / wind_width);
+
+        cam.phi = clamp(cam.phi + dPhi, 0.0f, (float)M_PI);
+        cam.theta += dTheta;
+        computeCameraPosition();
+    }
+
+    mouse.x = x;
+    mouse.y = y;
+}
+
+static void glfw_mouse_button_callback(GLFWwindow* wind, int button, int action, int mods)
+{
+    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS)
+        mouse.pressed = true;
+    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE)
+        mouse.pressed = false;
+}
+
+static void glfw_scroll_callback(GLFWwindow* wind, double dx, double dy)
+{
+    if (fabs(dy) > EPS_F)
+    {
+        cam.r = clamp(cam.r + (float)dy, MIN_R, MAX_R);
+        computeCameraPosition();
+    }
 }
 
 static void glfw_key_callback(GLFWwindow* wind, int key, int scancode, int action, int mods)
@@ -315,7 +363,7 @@ int main()
         // Create a command queue and use the first device
         params.q = CommandQueue(context, params.d);
         
-        params.p = getProgram(context, ASSETS_DIR "/raytrace.cl",errCode);
+        params.p = getProgram(context, ASSETS_DIR"/raytrace.cl",errCode);
 
         std::ostringstream options;
         options << "-I " << std::string(ASSETS_DIR);
@@ -325,7 +373,7 @@ int main()
         params.k = Kernel(params.p, "raytrace", &errCode);
         //cout << err << endl;
         // create opengl stuff
-        rparams.prg = initShaders(ASSETS_DIR "/fractal.vert", ASSETS_DIR "/fractal.frag");
+        rparams.prg = initShaders(ASSETS_DIR"/fractal.vert", ASSETS_DIR "/fractal.frag");
         rparams.tex = createTexture2D(wind_width,wind_height);
         GLuint vbo  = createBuffer(12,vertices,GL_STATIC_DRAW);
         GLuint tbo  = createBuffer(8,texcords,GL_STATIC_DRAW);
@@ -379,10 +427,10 @@ int main()
         }
         cam.screenDist = ((double) wind_height) / (2.0 * tan(radians(cam.vFov) / 2));
 
+        params.c2w = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 9);
         computeCameraPosition();
         
-        params.c2w = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 9);
-        params.q.enqueueWriteBuffer(params.c2w, CL_TRUE, 0, sizeof(float) * 9, cam.c2w);
+        // params.q.enqueueWriteBuffer(params.c2w, CL_TRUE, 0, sizeof(float) * 9, cam.c2w);
 
         std::vector<int> seed(wind_width * wind_height);
         for (int i = 0; i < wind_width * wind_height; i++)
@@ -395,6 +443,7 @@ int main()
         {
             spheres[i] = 0;
         }
+        spheres[3] = 0.5;
         params.spheres = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 3 * nparticles);
         params.q.enqueueWriteBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
 
@@ -408,8 +457,13 @@ int main()
         return 249;
     }
 
-    glfwSetKeyCallback(window,glfw_key_callback);
+    glfwSetKeyCallback(window, glfw_key_callback);
+    glfwSetCursorPosCallback(window, glfw_cursor_position_callback);
+    glfwSetMouseButtonCallback(window, glfw_mouse_button_callback);
+    glfwSetScrollCallback(window, glfw_scroll_callback);
     glfwSetFramebufferSizeCallback(window,glfw_framebuffer_size_callback);
+
+    mouse.pressed = false;
 
     while (!glfwWindowShouldClose(window)) {
         // process call
