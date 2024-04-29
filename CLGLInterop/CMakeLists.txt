@@ -16,6 +16,7 @@ endif()
 find_package(glfw3 3.3 REQUIRED)
 find_package(OpenCL 1.2 REQUIRED)
 find_package(OpenGL 3.3 REQUIRED)
+find_package(ZLIB REQUIRED)
 
 if(APPLE)
     find_package(X11 REQUIRED)
@@ -57,6 +58,7 @@ macro(BUILD_EXAMPLE EXAMPLE_NAME EXAMPLE_SOURCE OUT_DIR_NAME)
         glfw
         OpenCL::OpenCL
         OpenGL::GL
+        ${ZLIB_LIBRARIES}
         ${CMAKE_DL_LIBS}
         glad-interface
         $<$<PLATFORM_ID:Darwin>:X11::x11>
