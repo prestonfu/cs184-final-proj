@@ -104,14 +104,12 @@ typedef struct {
 } render_params;
 
 typedef struct {
-    //float cameraPos[3];
     float targetPos[3];
     float hFov;
     float vFov;
     float phi;
     float theta;
     float r;
-    //float c2w[9];
     float screenDist;
 } camera_state;
 
@@ -144,8 +142,7 @@ void computeCameraPosition()
 
     for (int i = 0; i < 3; i++)
     {
-        //cam.cameraPos[i] = cam.targetPos[i] + dirToCamera[i];
-        params.cameraPos.s[i] = cam.targetPos[i] + dirToCamera[i];//cam.cameraPos[i];
+        params.cameraPos.s[i] = cam.targetPos[i] + dirToCamera[i];
     }
     float upVec[3] = {0.0f, sinPhi > 0 ? 1.0f : -1.0f, 0.0f};
     float c2w[9];
@@ -305,7 +302,7 @@ int main()
 
     glfwSetErrorCallback(glfw_error_callback);
 
-    window = glfwCreateWindow(wind_width,wind_height,"Julia Sets",NULL,NULL);
+    window = glfwCreateWindow(wind_width,wind_height,"Raymarching",NULL,NULL);
     //window = glfwCreateWindow(wind_width,wind_height,"Julia Sets",monitor,NULL);
     if (!window) {
         glfwTerminate();
@@ -370,9 +367,8 @@ int main()
         options << "-I " << std::string(ASSETS_DIR);
 
         params.p.build(std::vector<Device>(1, params.d), options.str().c_str());
-        //cl_int err;
         params.k = Kernel(params.p, "raytrace", &errCode);
-        //cout << err << endl;
+
         // create opengl stuff
         rparams.prg = initShaders(ASSETS_DIR"/fractal.vert", ASSETS_DIR "/fractal.frag");
         rparams.tex = createTexture2D(wind_width,wind_height);
@@ -431,8 +427,6 @@ int main()
         params.c2w = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 9);
         computeCameraPosition();
         
-        // params.q.enqueueWriteBuffer(params.c2w, CL_TRUE, 0, sizeof(float) * 9, cam.c2w);
-
         std::vector<int> seed(wind_width * wind_height);
         for (int i = 0; i < wind_width * wind_height; i++)
             seed[i] = rand();
