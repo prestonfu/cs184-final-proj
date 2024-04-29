@@ -37,13 +37,13 @@ std::vector<std::string> get_files_in_symlink(const std::string& relative_path) 
     return files;
 }
 
-std::map<std::string, std::vector<double>> read_files(std::vector<std::string> files) {
-    std::map<std::string, std::vector<double>> res;
+std::map<std::string, std::vector<float>> read_files(std::vector<std::string> files) {
+    std::map<std::string, std::vector<float>> res;
     for (const std::string& file : files) {
         cnpy::NpyArray npy_arr = cnpy::npy_load(file);
         assert(npy_arr.shape.size() == 2 && arr.shape[0] == NUM_POINTS && arr.shape[1] == NUM_FEATURES);
-        double* arr = npy_arr.data<double>();
-        std::vector<double> vec(arr, arr + npy_arr.num_vals);
+        float* arr = npy_arr.data<float>();
+        std::vector<float> vec(arr, arr + npy_arr.num_vals);
         std::cout << "debug " << *(arr + 0) << " " << vec[0] << " " << vec[1] << " " << npy_arr.num_vals << " " << std::endl;
         res[file] = vec;
     }
@@ -52,7 +52,7 @@ std::map<std::string, std::vector<double>> read_files(std::vector<std::string> f
 
 int main() {
     std::vector<std::string> files = get_files_in_symlink("/../assets/point-cloud-300M");
-    std::map<std::string, std::vector<double>> point_clouds = read_files(files);
+    std::map<std::string, std::vector<float>> point_clouds = read_files(files);
     for (auto it = point_clouds.begin(); it != point_clouds.end(); it++) {
         std::cout << it->first << " " << it->second[0] << " " << it->second[1] << std::endl;
     }
