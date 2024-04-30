@@ -1,9 +1,9 @@
-#define SPHERE_RADIUS 0.02
-#define SPHERE_COUNT 1024
+#define SPHERE_RADIUS 0.01
+#define SPHERE_COUNT 4096
 #define MIN_THRESHOLD (0.001f)
 #define MAX_THRESHOLD 10
-#define NUM_ITERATIONS 25
-#define WORK_GROUP_SIZE 64
+#define NUM_ITERATIONS 50
+#define WORK_GROUP_SIZE 256
 
 #define NCLIP 0
 #define FCLIP 4
@@ -22,13 +22,14 @@
 #define LIGHT_SAMPLES 4
 
 #define EPS_F (0.00001f)
-#define EPS_GRAD (0.0001f)
+#define EPS_GRAD (0.001f)
 
-#define K_SMOOTH (0.001f)
+//#define K_SMOOTH (0.0005f)
+#define K_SMOOTH (0.02f)
 
 #define randf(seed) ((float)(seed = (((long)(seed) * 16807) % 2147483647)) / 2147483647)
 
-#define SMOOTHING true
+#define SMOOTHING false
 
 
 typedef struct {
@@ -71,9 +72,9 @@ bool intersect_bbox(Ray r, float3 min_vals, float3 max_vals)
     return t1 >= t0;
 }
 
-float smooth_min(float distA, float distB)
+inline float smooth_min(float distA, float distB)
 {
-    float h = max(K_SMOOTH - fabs(distA - distB), 0.0f) / K_SMOOTH;
+    float h = max(K_SMOOTH - fabs(distA - distB), 0.0f) * 1 / K_SMOOTH;
     return min(distA, distB) - h * h * h * K_SMOOTH * 1 / 6.0f;
 }
 
@@ -167,17 +168,19 @@ kernel void raytrace
                 {
                     for (uint l = 0; l < WORK_GROUP_SIZE; l++)
                     {
-                        float3 disp = hit_p - localBuffer[l];
-                        float new_dist = disp.x * disp.x + disp.y * disp.y + disp.z * disp.z;
-                        //float new_dist = fast_length(hit_p - localBuffer[l]) - SPHERE_RADIUS;
-
                         if (SMOOTHING)
-                            dist = smooth_min(dist, new_dist);
-                        
-                        else if (new_dist < dist)
                         {
-                            dist = new_dist;
-                            c = localBuffer[l];
+                            dist = smooth_min(dist, fast_length(hit_p - localBuffer[l]) - SPHERE_RADIUS);
+                        }
+                        else
+                        { 
+                            float3 disp = hit_p - localBuffer[l];
+                            float new_dist = disp.x * disp.x + disp.y * disp.y + disp.z * disp.z;
+                            if (new_dist < dist)
+                            {
+                                dist = new_dist;
+                                c = localBuffer[l];
+                            }
                         }
                     }
                 }
@@ -199,7 +202,8 @@ kernel void raytrace
             //         c = center;
             //     }
             // }
-            dist = sqrt(dist) - SPHERE_RADIUS;
+            if (!SMOOTHING)
+                dist = sqrt(dist) - SPHERE_RADIUS;
             isect.t += dist;
             hit_p = r.o + isect.t * r.d;
 
@@ -222,47 +226,48 @@ kernel void raytrace
             }
         }
 
-#ifdef SMOOTHING
+//#ifdef SMOOTHING
         if (SMOOTHING)
         {
-        // Calculate normal
-        float3 hits[6] = {hit_p, hit_p, hit_p, hit_p, hit_p, hit_p};
-        hits[0].x += EPS_GRAD;
-        hits[1].x -= EPS_GRAD;
-        hits[2].y += EPS_GRAD;
-        hits[3].y -= EPS_GRAD;
-        hits[4].z += EPS_GRAD;
-        hits[5].z -= EPS_GRAD;
-        float dists[6] = {MAX_THRESHOLD, MAX_THRESHOLD, MAX_THRESHOLD, MAX_THRESHOLD, MAX_THRESHOLD, MAX_THRESHOLD};
-        for (int k = 0; k < SPHERE_COUNT / WORK_GROUP_SIZE; k++)
-        {
-            int index = k * WORK_GROUP_SIZE + lid;
-            localBuffer[lid] = (float3)(spheres[3 * index], spheres[3 * index + 1], spheres[3 * index + 2]);
-
-            barrier(CLK_LOCAL_MEM_FENCE);
-
-            if (isect.hit)
+            // Calculate normal
+            float3 hits[6] = {hit_p, hit_p, hit_p, hit_p, hit_p, hit_p};
+            hits[0].x += EPS_GRAD;
+            hits[1].x -= EPS_GRAD;
+            hits[2].y += EPS_GRAD;
+            hits[3].y -= EPS_GRAD;
+            hits[4].z += EPS_GRAD;
+            hits[5].z -= EPS_GRAD;
+            float dists[6] = {MAX_THRESHOLD, MAX_THRESHOLD, MAX_THRESHOLD, MAX_THRESHOLD, MAX_THRESHOLD, MAX_THRESHOLD};
+            for (int k = 0; k < SPHERE_COUNT / WORK_GROUP_SIZE; k++)
             {
-                for (uint l = 0; l < WORK_GROUP_SIZE; l++)
-                {
-                    for (int j = 0; j < 6; j++)
-                    {
-                        float3 disp = hits[j] - localBuffer[l];
-                        float new_dist = disp.x * disp.x + disp.y * disp.y + disp.z * disp.z;
+                int index = k * WORK_GROUP_SIZE + lid;
+                localBuffer[lid] = (float3)(spheres[3 * index], spheres[3 * index + 1], spheres[3 * index + 2]);
 
-                        dists[j] = smooth_min(dists[j], new_dist);
+                barrier(CLK_LOCAL_MEM_FENCE);
+
+                if (isect.hit)
+                {
+                    for (uint l = 0; l < WORK_GROUP_SIZE; l++)
+                    {
+                        for (int j = 0; j < 6; j++)
+                        {
+                            float3 disp = hits[j] - localBuffer[l];
+                            //float new_dist = disp.x * disp.x + disp.y * disp.y + disp.z * disp.z;
+                            float new_dist = fast_length(disp) - SPHERE_RADIUS;
+
+                            dists[j] = smooth_min(dists[j], new_dist);
+                        }
                     }
                 }
+
+                barrier(CLK_LOCAL_MEM_FENCE);
             }
+            //for (int j = 0; j < 6; j++)
+            //    dists[j] = sqrt(dists[j]) - SPHERE_RADIUS;
 
-            barrier(CLK_LOCAL_MEM_FENCE);
+            isect.n = normalize((float3)(dists[0] - dists[1], dists[2] - dists[3], dists[4] - dists[5]));
         }
-        for (int j = 0; j < 6; j++)
-            dists[j] = sqrt(dists[j]) - SPHERE_RADIUS;
-
-        isect.n = normalize((float3)(dists[0] - dists[1], dists[2] - dists[3], dists[4] - dists[5]));
-        }
-#endif
+//#endif
         // if (xi >= width || yi >= height)
         //     continue;
 

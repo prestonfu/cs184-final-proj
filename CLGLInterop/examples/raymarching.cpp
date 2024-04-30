@@ -39,8 +39,11 @@ using namespace cl;
 #define EPS_F (0.00001f)
 #define MIN_R (0.1f)
 #define MAX_R (5.0f)
-#define LOCAL_WORK_SIZE 64
-#define SPHERE_RADIUS (0.02f)
+#define LOCAL_WORK_SIZE 256
+#define LOCAL_WORK_SIZE_X 16
+#define LOCAL_WORK_SIZE_Y 16
+#define SPHERE_RADIUS (0.01f)
+#define SPHERE_COUNT 4096
 
 typedef unsigned int uint;
 
@@ -89,20 +92,23 @@ static map<string, std::vector<float>> pointClouds;
 
 static int wind_width = 640;
 static int wind_height= 480;
-static int const nparticles = 1024;
+static int const nparticles = SPHERE_COUNT;
 static int gJuliaSetIndex = 0;
+
+static std::vector<int> permutation(nparticles);
+static std::vector<uint> codes(nparticles);
+static std::vector<float> spheres(3 * nparticles);
+static std::vector<float> bboxes(6 * nparticles / LOCAL_WORK_SIZE);
 
 typedef struct {
     Device d;
     CommandQueue q;
     Program p;
     Kernel raytrace;
-    //Kernel project;
     ImageGL tex;
     cl_float3 cameraPos;
     Buffer c2w;
     Buffer spheres;
-    //Buffer projection;
     Buffer permutation;
     Buffer bboxes;
     Buffer seed;
@@ -143,6 +149,14 @@ void loadPointCloud(string name)
         return;
     }
     cout << name << " loaded" << endl;
+    // std::vector<float> cloud = pointClouds[name];
+    // for (int i = cloud.size() / 3 - 1; i > 0; i--)
+    // {
+    //     int j = rand() % i;
+    //     swap(cloud[3 * i], cloud[3 * j]);
+    //     swap(cloud[3 * i + 1], cloud[3 * j + 1]);
+    //     swap(cloud[3 * i + 2], cloud[3 * j + 2]);
+    // }
     params.q.enqueueWriteBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, pointClouds[name].data());
 }
 
@@ -190,38 +204,7 @@ void computeCameraPosition()
     c2w[8] = dirToCamera[2] / norm;
 
     params.q.enqueueWriteBuffer(params.c2w, CL_TRUE, 0, sizeof(float) * 9, c2w);
-
-    // cout << "upvec" << endl;
-    // cout << upVec[0] << " " << upVec[1] << " " << upVec[2] << endl;
-
-    // cout << "c2w" << endl;
-    // for (int i = 0; i < 3; i++)
-    // {
-    //     for (int j = 0; j < 3; j++)
-    //     {
-    //         cout << c2w[3 * i + j] << " ";
-    //     }
-    //     cout << endl;
-    // }
-    // cout << "Camera pos" << endl;
-    // for (int i = 0; i < 3; i++)
-    //     cout << params.cameraPos.s[i] << " ";
-    // cout << endl;
 }
-
-//[l, r)
-// void bvh(std::vector<float> &projection, std::vector<int> &permutation, int l, int r, int sortAxis)
-// {
-//     if (r - l <= 256)
-//         return;
-//     sort(permutation.begin() + l, permutation.begin() + r, [&](int a, int b) -> bool
-//         {
-//             return projection[4 * a + sortAxis] + projection[4 * a + 2 + sortAxis] < projection[4 * b + sortAxis] + projection[4 * b + 2 + sortAxis];
-//         });
-//     int m = (l + r) / 2;
-//     bvh(projection, permutation, l, m, 1 - sortAxis);
-//     bvh(projection, permutation, m, r, 1 - sortAxis);
-// }
 
 //https://developer.nvidia.com/blog/thinking-parallel-part-iii-tree-construction-gpu/
 unsigned int expandBits(unsigned int v)
@@ -361,7 +344,6 @@ int main()
     glfwSetErrorCallback(glfw_error_callback);
 
     window = glfwCreateWindow(wind_width,wind_height,"Raymarching",NULL,NULL);
-    //window = glfwCreateWindow(wind_width,wind_height,"Julia Sets",monitor,NULL);
     if (!window) {
         glfwTerminate();
         return 254;
@@ -433,19 +415,9 @@ int main()
         //sources.push_back({ kernelSource2.c_str(), kernelSource2.length() });
         params.p = Program(context, sources);
 
-        //params.p = getProgram(context, ASSETS_DIR"/raytrace.cl",errCode);
-
-        //std::ostringstream options;
-        //options << "-I " << std::string(ASSETS_DIR);
-
-        //params.p.build(std::vector<Device>(1, params.d), options.str().c_str());
         params.p.build(std::vector<Device>(1, params.d));
         params.raytrace = Kernel(params.p, "raytrace");
         //params.project = Kernel(params.p, "project");
-
-        // int kernel_work_group_size;
-        // clGetKernelWorkGroupInfo(params.raytrace.get(), NULL, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &kernel_work_group_size, NULL);
-        // cout << "CL_KERNEL_WORK_GROUP_SIZE : " << kernel_work_group_size << std::endl;
 
         // create opengl stuff
         rparams.prg = initShaders(ASSETS_DIR"/fractal.vert", ASSETS_DIR "/fractal.frag");
@@ -510,10 +482,10 @@ int main()
         params.q.enqueueWriteBuffer(params.seed, CL_TRUE, 0, sizeof(int) * wind_width * wind_height, seed.data());
 
         params.spheres = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 3 * nparticles);
-        loadPointCloud("shrek");
+        loadPointCloud("guitar");
 
-        //params.projection = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 4 * nparticles);      
-
+        for (int i = 0; i < nparticles; i++)
+            permutation[i] = i;
         params.permutation = Buffer(context, CL_MEM_READ_WRITE, sizeof(int) * nparticles);  
         params.bboxes = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 6 * nparticles / LOCAL_WORK_SIZE);
 
@@ -594,44 +566,19 @@ void processTimeStep()
         float hFov_expr = 2 * tan(0.5 * cam.hFov * M_PI / 180);
         float vFov_expr = 2 * tan(0.5 * cam.vFov * M_PI / 180);
 
-        // NDRange local(16);
-        // NDRange global(16 * divup(nparticles, 16));
-        // params.project.setArg(0, (uint)params.dims[0]);
-        // params.project.setArg(1, (uint)params.dims[1]);
-        // params.project.setArg(2, hFov_expr);
-        // params.project.setArg(3, vFov_expr);
-        // params.project.setArg(4, params.cameraPos);
-        // params.project.setArg(5, params.c2w);
-        // params.project.setArg(6, params.spheres);
-        // params.project.setArg(7, params.projection);
-        // params.q.enqueueNDRangeKernel(params.project, cl::NullRange, global, local);
-
-        // std::vector<float> projection(4 * nparticles);
-        // params.q.enqueueReadBuffer(params.projection, CL_TRUE, 0, sizeof(float) * 4 * nparticles, projection.data());
-        // params.q.finish();
-
-        std::vector<float> spheres(3 * nparticles);
         params.q.enqueueReadBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
         params.q.finish();
-
-        std::vector<int> permutation(nparticles);
-        std::vector<uint> codes(nparticles);
+        
         for (int i = 0; i < nparticles; i++)
-        {
-            permutation[i] = i;
             codes[i] = morton3D(spheres[3 * i], spheres[3 * i + 1], spheres[3 * i + 2]);
-        }
 
-        // could store permutation which could help if sort is efficient on nearly sorted lists
-        sort(permutation.begin(), permutation.end(), [&codes](int a, int b) -> bool
+        sort(permutation.begin(), permutation.end(), [](int a, int b) -> bool
         {
             return codes[a] < codes[b];
         });
-        //bvh(projection, permutation, 0, nparticles, 0);
 
         params.q.enqueueWriteBuffer(params.permutation, CL_TRUE, 0, sizeof(int) * nparticles, permutation.data());
 
-        std::vector<float> bboxes(6 * nparticles / LOCAL_WORK_SIZE);
         for (int i = 0; i < nparticles / LOCAL_WORK_SIZE; i++)
         {
             bboxes[6 * i + 0] = bboxes[6 * i + 1] = bboxes[6 * i + 2] = INFINITY;
@@ -648,13 +595,13 @@ void processTimeStep()
         }
         params.q.enqueueWriteBuffer(params.bboxes, CL_TRUE, 0, sizeof(float) * 6 * nparticles / LOCAL_WORK_SIZE, bboxes.data());
 
-        NDRange local(8, 8);
-        NDRange global( local[0] * divup(params.dims[0], local[0]),
-                        local[1] * divup(params.dims[1], local[1]));
+        NDRange local(LOCAL_WORK_SIZE_X, LOCAL_WORK_SIZE_Y);
+        NDRange global( local[0] * divup(wind_width, local[0]),
+                        local[1] * divup(wind_height, local[1]));
         // set kernel arguments
         params.raytrace.setArg(0, params.tex);
-        params.raytrace.setArg(1, (uint)params.dims[0]);
-        params.raytrace.setArg(2, (uint)params.dims[1]);
+        params.raytrace.setArg(1, wind_width);
+        params.raytrace.setArg(2, wind_height);
         params.raytrace.setArg(3, hFov_expr);
         params.raytrace.setArg(4, vFov_expr);
         params.raytrace.setArg(5, params.cameraPos);
