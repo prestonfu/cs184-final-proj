@@ -1,10 +1,16 @@
-#define MAX_VEL 69
-#define MAX_ACCEL 69
+#define MAX_VEL 2
+#define MAX_ACCEL 8
 
-kernel void integrate(const int n, global float* positions, global float* velocities, global float* accelerations, const float deltaTime)
+kernel void integrate
+(
+    global float* positions, 
+    global float* velocities, 
+    global const float* accelerations, 
+    const float deltaTime
+)
 {
     int id = get_global_id(0);
-    float3 pos = (float3)(positions[2 * id], positions[2 * id + 1], 0);
+    float3 pos = (float3)(positions[3 * id], positions[3 * id + 1], positions[3 * id + 2]);
     float3 vel = (float3)(velocities[3 * id], velocities[3 * id + 1], velocities[3 * id + 2]);
     float3 accel = (float3)(accelerations[3 * id], accelerations[3 * id + 1], accelerations[3 * id + 2]);
     if (length(accel) > MAX_ACCEL)
@@ -18,14 +24,15 @@ kernel void integrate(const int n, global float* positions, global float* veloci
         vel *= MAX_VEL / length(vel);
     }
     
-    positions[2 * id] = pos.x;
-    positions[2 * id + 1] = pos.y;
+    positions[3 * id] = pos.x;
+    positions[3 * id + 1] = pos.y;
+    positions[3 * id + 2] = pos.z;
     velocities[3 * id] = vel.x;
     velocities[3 * id + 1] = vel.y;
     velocities[3 * id + 2] = vel.z;
-    accelerations[3 * id] = accel.x;
-    accelerations[3 * id + 1] = accel.y;
-    accelerations[3 * id + 2] = accel.z;
+    //accelerations[3 * id] = accel.x;
+    //accelerations[3 * id + 1] = accel.y;
+    //accelerations[3 * id + 2] = accel.z;
 }
 
 /*

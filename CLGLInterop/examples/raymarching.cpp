@@ -112,7 +112,12 @@ typedef struct {
     Buffer permutation;
     Buffer bboxes;
     Buffer seed;
-    size_t dims[3];
+
+    Kernel kc; // calculate.cl kernel (calculate acceleration given positions and velocities)
+    Kernel ki; // integrate.cl kernel (calculate position and velocity given acceleration)
+    Buffer i; // position buffer
+    Buffer v; // velocity buffer
+    Buffer a; // acceleration buffer
 } process_params;
 
 typedef struct {
@@ -304,7 +309,7 @@ static void glfw_framebuffer_size_callback(GLFWwindow* wind, int width, int heig
     //wind_height = height;
 }
 
-void processTimeStep(void);
+void processTimeStep(float);
 void renderFrame(void);
 
 inline float radians(float angle)
@@ -407,17 +412,21 @@ int main()
         // Set up program and kernels
         ifstream kernelFile1(ASSETS_DIR"/raytrace.cl");
         string kernelSource1((istreambuf_iterator<char>(kernelFile1)), istreambuf_iterator<char>());
-        //ifstream kernelFile2(ASSETS_DIR"/project.cl");
-        //string kernelSource2((istreambuf_iterator<char>(kernelFile2)), istreambuf_iterator<char>());
+        ifstream kernelFile2(ASSETS_DIR"/calculate.cl");
+        string kernelSource2((istreambuf_iterator<char>(kernelFile2)), istreambuf_iterator<char>());
+        ifstream kernelFile3(ASSETS_DIR"/integrate.cl");
+        string kernelSource3((istreambuf_iterator<char>(kernelFile3)), istreambuf_iterator<char>());
 
         Program::Sources sources;
         sources.push_back({ kernelSource1.c_str(), kernelSource1.length() });
-        //sources.push_back({ kernelSource2.c_str(), kernelSource2.length() });
+        sources.push_back({ kernelSource2.c_str(), kernelSource2.length() });
+        sources.push_back({ kernelSource3.c_str(), kernelSource3.length() });
         params.p = Program(context, sources);
 
         params.p.build(std::vector<Device>(1, params.d));
         params.raytrace = Kernel(params.p, "raytrace");
-        //params.project = Kernel(params.p, "project");
+        params.kc = Kernel(params.p, "calculate");
+        params.ki = Kernel(params.p, "integrate");
 
         // create opengl stuff
         rparams.prg = initShaders(ASSETS_DIR"/fractal.vert", ASSETS_DIR "/fractal.frag");
@@ -482,16 +491,22 @@ int main()
         params.q.enqueueWriteBuffer(params.seed, CL_TRUE, 0, sizeof(int) * wind_width * wind_height, seed.data());
 
         params.spheres = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 3 * nparticles);
-        loadPointCloud("guitar");
+        loadPointCloud("shrek");
 
         for (int i = 0; i < nparticles; i++)
             permutation[i] = i;
         params.permutation = Buffer(context, CL_MEM_READ_WRITE, sizeof(int) * nparticles);  
         params.bboxes = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 6 * nparticles / LOCAL_WORK_SIZE);
 
-        params.dims[0] = wind_width;
-        params.dims[1] = wind_height;
-        params.dims[2] = 1;
+        std::vector<float> vel(3 * nparticles), accel(3 * nparticles);
+        for (int i = 0; i < 3 * nparticles; i++)
+        {
+            vel[i] = accel[i] = 0;
+        }
+        params.v = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 3 * nparticles);
+        params.a = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 3 * nparticles);
+        params.q.enqueueWriteBuffer(params.v, CL_TRUE, 0, sizeof(float) * 3 * nparticles, vel.data());
+        params.q.enqueueWriteBuffer(params.a, CL_TRUE, 0, sizeof(float) * 3 * nparticles, accel.data());
     } catch(Error error) {
         std::cout << error.what() << "(" << error.err() << ")" << std::endl;
         std::string val = params.p.getBuildInfo<CL_PROGRAM_BUILD_LOG>(params.d);
@@ -512,6 +527,8 @@ int main()
     double time_diff;
     unsigned int counter = 0;
 
+    float previousTime = glfwGetTime();
+
     while (!glfwWindowShouldClose(window)) {
 
         curr_time = glfwGetTime();
@@ -526,14 +543,16 @@ int main()
             prev_time = curr_time;
             counter = 0;
         }
+        float currentTime = glfwGetTime();
         // process call
-        processTimeStep();
+        processTimeStep(currentTime - previousTime);
         // render call
         renderFrame();
         // swap front and back buffers
         glfwSwapBuffers(window);
         // poll for events
         glfwPollEvents();
+        previousTime = currentTime;
     }
 
     glfwDestroyWindow(window);
@@ -547,10 +566,23 @@ inline unsigned divup(unsigned a, unsigned b)
     return (a+b-1)/b;
 }
 
-void processTimeStep()
+void processTimeStep(float deltaTime)
 {
     cl::Event ev;
     try {
+        NDRange local(16);
+        NDRange global(16 * divup(nparticles, 16));
+        // set kernel arguments
+        params.kc.setArg(0, params.spheres);
+        params.kc.setArg(1, params.v);
+        params.kc.setArg(2, params.a);
+        params.kc.setArg(3, deltaTime);
+        params.q.enqueueNDRangeKernel(params.kc, cl::NullRange, global, local);
+        params.ki.setArg(0, params.spheres);
+        params.ki.setArg(1, params.v);
+        params.ki.setArg(2, params.a);
+        params.ki.setArg(3, deltaTime);
+        params.q.enqueueNDRangeKernel(params.ki, cl::NullRange, global, local);
         glFinish();
 
         std::vector<Memory> objs;
@@ -566,6 +598,7 @@ void processTimeStep()
         float hFov_expr = 2 * tan(0.5 * cam.hFov * M_PI / 180);
         float vFov_expr = 2 * tan(0.5 * cam.vFov * M_PI / 180);
 
+        params.q.finish();
         params.q.enqueueReadBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
         params.q.finish();
         
@@ -595,8 +628,8 @@ void processTimeStep()
         }
         params.q.enqueueWriteBuffer(params.bboxes, CL_TRUE, 0, sizeof(float) * 6 * nparticles / LOCAL_WORK_SIZE, bboxes.data());
 
-        NDRange local(LOCAL_WORK_SIZE_X, LOCAL_WORK_SIZE_Y);
-        NDRange global( local[0] * divup(wind_width, local[0]),
+        local = NDRange(LOCAL_WORK_SIZE_X, LOCAL_WORK_SIZE_Y);
+        global = NDRange( local[0] * divup(wind_width, local[0]),
                         local[1] * divup(wind_height, local[1]));
         // set kernel arguments
         params.raytrace.setArg(0, params.tex);
