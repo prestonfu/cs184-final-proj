@@ -90,10 +90,10 @@ static const float CJULIA[] = {
 
 static map<string, std::vector<float>> pointClouds;
 
-static int wind_width = 640;
-static int wind_height= 480;
+static int wind_width = 640;//640;
+static int wind_height= 480;//480;
 static int const nparticles = SPHERE_COUNT;
-static int gJuliaSetIndex = 0;
+static int selectedIndex = -1;
 
 static std::vector<int> permutation(nparticles);
 static std::vector<uint> codes(nparticles);
@@ -280,24 +280,40 @@ static void glfw_key_callback(GLFWwindow* wind, int key, int scancode, int actio
     if (action == GLFW_PRESS) {
         if (key == GLFW_KEY_ESCAPE)
             glfwSetWindowShouldClose(wind, GL_TRUE);
+        else if (key == GLFW_KEY_0)
+            selectedIndex = -1;
         else if (key == GLFW_KEY_1)
-            gJuliaSetIndex = 0;
+            selectedIndex = 0;
         else if (key == GLFW_KEY_2)
-            gJuliaSetIndex = 1;
+            selectedIndex = 1;
         else if (key == GLFW_KEY_3)
-            gJuliaSetIndex = 2;
+            selectedIndex = 2;
         else if (key == GLFW_KEY_4)
-            gJuliaSetIndex = 3;
+            selectedIndex = 3;
         else if (key == GLFW_KEY_5)
-            gJuliaSetIndex = 4;
+            selectedIndex = 4;
         else if (key == GLFW_KEY_6)
-            gJuliaSetIndex = 5;
+            selectedIndex = 5;
         else if (key == GLFW_KEY_7)
-            gJuliaSetIndex = 6;
+            selectedIndex = 6;
         else if (key == GLFW_KEY_8)
-            gJuliaSetIndex = 7;
+            selectedIndex = 7;
         else if (key == GLFW_KEY_9)
-            gJuliaSetIndex = 8;
+            selectedIndex = 8;
+        else if (key == GLFW_KEY_Q)
+            selectedIndex = 9;
+        else if (key == GLFW_KEY_W)
+            selectedIndex = 10;
+        else if (key == GLFW_KEY_E)
+            selectedIndex = 11;
+        else if (key == GLFW_KEY_R)
+            selectedIndex = 12;
+        else if (key == GLFW_KEY_T)
+            selectedIndex = 13;    
+        else if (key == GLFW_KEY_Y)
+            selectedIndex = 14;
+        else if (key == GLFW_KEY_U)
+            selectedIndex = 15;                                
     }
 }
 
@@ -320,6 +336,22 @@ inline float radians(float angle)
 inline float degrees(float radians)
 {
     return radians * 180 / M_PI;
+}
+
+//[l, r)
+void bvh(std::vector<float> &spheres, std::vector<int> &permutation, int l, int r, int sortAxis)
+{
+    if (r - l <= 256)
+        return;
+    sort(permutation.begin() + l, permutation.begin() + r, [&](int a, int b) -> bool
+        {
+            return spheres[3 * a + sortAxis] < spheres[3 * b + sortAxis];
+        });
+    int m = (l + r) / 2;
+    //bvh(spheres, permutation, l, m, (sortAxis + 1) % 3);
+    //bvh(spheres, permutation, m, r, (sortAxis + 1) % 3);
+    bvh(spheres, permutation, l, m, rand() % 3);
+    bvh(spheres, permutation, m, r, rand() % 3);
 }
 
 int main()
@@ -573,16 +605,18 @@ void processTimeStep(float deltaTime)
         NDRange local(16);
         NDRange global(16 * divup(nparticles, 16));
         // set kernel arguments
-        params.kc.setArg(0, params.spheres);
-        params.kc.setArg(1, params.v);
-        params.kc.setArg(2, params.a);
-        params.kc.setArg(3, deltaTime);
-        params.q.enqueueNDRangeKernel(params.kc, cl::NullRange, global, local);
-        params.ki.setArg(0, params.spheres);
-        params.ki.setArg(1, params.v);
-        params.ki.setArg(2, params.a);
-        params.ki.setArg(3, deltaTime);
-        params.q.enqueueNDRangeKernel(params.ki, cl::NullRange, global, local);
+        // params.kc.setArg(0, params.spheres);
+        // params.kc.setArg(1, params.v);
+        // params.kc.setArg(2, params.a);
+        // params.kc.setArg(3, deltaTime);
+        // params.q.enqueueNDRangeKernel(params.kc, cl::NullRange, global, local);
+        // params.ki.setArg(0, params.spheres);
+        // params.ki.setArg(1, params.v);
+        // params.ki.setArg(2, params.a);
+        // params.ki.setArg(3, deltaTime);
+        // params.q.enqueueNDRangeKernel(params.ki, cl::NullRange, global, local);
+        // params.q.finish();
+
         glFinish();
 
         std::vector<Memory> objs;
@@ -598,17 +632,35 @@ void processTimeStep(float deltaTime)
         float hFov_expr = 2 * tan(0.5 * cam.hFov * M_PI / 180);
         float vFov_expr = 2 * tan(0.5 * cam.vFov * M_PI / 180);
 
-        params.q.finish();
         params.q.enqueueReadBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
         params.q.finish();
         
-        for (int i = 0; i < nparticles; i++)
-            codes[i] = morton3D(spheres[3 * i], spheres[3 * i + 1], spheres[3 * i + 2]);
+        bvh(spheres, permutation, 0, nparticles, rand() % 3);
 
-        sort(permutation.begin(), permutation.end(), [](int a, int b) -> bool
-        {
-            return codes[a] < codes[b];
-        });
+        // float minx = spheres[0], miny = spheres[1], minz = spheres[2];
+        // float maxx = spheres[0], maxy = spheres[1], maxz = spheres[2];
+        // for (int i = 1; i < nparticles; i++)
+        // {
+        //     minx = min(minx, spheres[3 * i]);
+        //     maxx = max(maxx, spheres[3 * i]);
+        //     miny = min(miny, spheres[3 * i + 1]);
+        //     maxy = max(maxy, spheres[3 * i + 1]);
+        //     minz = min(minz, spheres[3 * i + 2]);
+        //     maxz = max(maxz, spheres[3 * i + 2]);
+        // }
+        // maxx -= minx;
+        // maxy -= miny;
+        // maxz -= minz;
+
+        // for (int i = 0; i < nparticles; i++)
+        // {
+        //     codes[i] = morton3D((spheres[3 * i] - minx) / maxx, (spheres[3 * i + 1] - miny) / maxy, (spheres[3 * i + 2] - minz) / maxz);
+        // }
+
+        // sort(permutation.begin(), permutation.end(), [](int a, int b) -> bool
+        // {
+        //     return codes[a] < codes[b];
+        // });
 
         params.q.enqueueWriteBuffer(params.permutation, CL_TRUE, 0, sizeof(int) * nparticles, permutation.data());
 
@@ -643,6 +695,7 @@ void processTimeStep(float deltaTime)
         params.raytrace.setArg(8, params.permutation);
         params.raytrace.setArg(9, params.bboxes);
         params.raytrace.setArg(10, params.seed);
+        params.raytrace.setArg(11, selectedIndex);
         params.q.enqueueNDRangeKernel(params.raytrace, cl::NullRange, global, local);
         // release opengl object
         res = params.q.enqueueReleaseGLObjects(&objs);

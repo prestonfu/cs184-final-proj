@@ -2,7 +2,7 @@
 #define SPHERE_COUNT 4096
 #define MIN_THRESHOLD (0.001f)
 #define MAX_THRESHOLD 10
-#define NUM_ITERATIONS 50
+#define NUM_ITERATIONS 40
 #define WORK_GROUP_SIZE 256
 
 #define NCLIP 0
@@ -31,6 +31,25 @@
 
 #define SMOOTHING false
 
+constant float3 colors[16] =
+{
+    (float3)(0, 0, 1),
+    (float3)(0, 1, 0),
+    (float3)(0, 1, 1),
+    (float3)(1, 0, 0),
+    (float3)(1, 0, 1),
+    (float3)(1, 1, 0),
+    (float3)(1, 1, 1),
+    (float3)(0, 0.5, 0.5),
+    (float3)(0.5, 0, 0.5),
+    (float3)(0.5, 0.5, 0),
+    (float3)(1, 0.5, 0),
+    (float3)(1, 0, 0.5),
+    (float3)(0.5, 1, 0),
+    (float3)(0.5, 0, 1),
+    (float3)(0, 0.5, 1),
+    (float3)(0, 1, 0.5)
+};
 
 typedef struct {
     float3 o;
@@ -43,6 +62,7 @@ typedef struct {
     float t; 
     float3 n;
     bool hit;
+    float3 rad;
 } Intersection;
 
 //bbox_1[0] = min_x, bbox_1[1] = min_y, bbox_1[2] = min_z
@@ -90,11 +110,14 @@ kernel void raytrace
     global const float* spheres,
     global const int* permutation, //for sphere positions
     global const float* bboxes,
-    global int* seedMemory
+    global int* seedMemory,
+    const int selectedIndex
 )
 {
     local float3 localBuffer[WORK_GROUP_SIZE];
     local ushort localFlags[WORK_GROUP_SIZE];
+    local int cnt;
+
     const uint xi = get_global_id(0);
     const uint yi = get_global_id(1);
     const uint lid = get_local_id(1) * get_local_size(0) + get_local_id(0);
@@ -122,6 +145,21 @@ kernel void raytrace
         r.mint = NCLIP;
         r.maxt = FCLIP;
 
+        localFlags[lid] = 0;
+        for (int k = 0; k < SPHERE_COUNT / WORK_GROUP_SIZE; k++)
+        {
+            if (intersect_bbox(r, (float3)(bboxes[6 * k], bboxes[6 * k + 1], bboxes[6 * k + 2]), (float3)(bboxes[6 * k + 3], bboxes[6 * k + 4], bboxes[6 * k + 5])))
+                localFlags[lid] |= (1 << k);
+        }
+        if (lid == 0)
+            cnt = WORK_GROUP_SIZE;
+
+        barrier(CLK_LOCAL_MEM_FENCE);
+
+        ushort flags = 0;
+        for (int k = 0; k < WORK_GROUP_SIZE; k++)
+            flags |= localFlags[k];
+
         Intersection isect;
         isect.t = r.mint;
         isect.hit = false;
@@ -131,34 +169,20 @@ kernel void raytrace
         for (int j = 0; j < NUM_ITERATIONS; j++)
         {
             float dist = MAX_THRESHOLD;
-            float3 c;
-            localFlags[lid] = 0;
-            if (!done)
-            {
-                for (int k = 0; k < SPHERE_COUNT / WORK_GROUP_SIZE; k++)
-                {
-                    if (intersect_bbox(r, (float3)(bboxes[6 * k], bboxes[6 * k + 1], bboxes[6 * k + 2]), (float3)(bboxes[6 * k + 3], bboxes[6 * k + 4], bboxes[6 * k + 5])))
-                        localFlags[lid] |= (1 << k);
-                }
-            }
+            //float3 c;
 
-            barrier(CLK_LOCAL_MEM_FENCE);
-
-            ushort res = 0;
-            for (int k = 0; k < WORK_GROUP_SIZE; k++)
-                res |= localFlags[k];
-
-            if (res == 0)
-                break;
+            //if (cnt == 0)
+            //    break;
 
             for (int k = 0; k < SPHERE_COUNT / WORK_GROUP_SIZE; k++)
             {
-                if ((res & (1 << k)) == 0)
+                if ((flags & (1 << k)) == 0 || (selectedIndex != -1 && k != selectedIndex))
                     continue;
                 int index = permutation[k * WORK_GROUP_SIZE + lid];
                 //int index = k * WORK_GROUP_SIZE + lid;
                 //if (index < SPHERE_COUNT)
-                    localBuffer[lid] = (float3)(spheres[3 * index], spheres[3 * index + 1], spheres[3 * index + 2]);
+                localBuffer[lid] = (float3)(spheres[3 * index], spheres[3 * index + 1], spheres[3 * index + 2]);
+                //localFlags[lid] = done;
                 //else
                 //    localBuffer[lid] = (float3)(INFINITY, INFINITY, INFINITY);
 
@@ -179,7 +203,9 @@ kernel void raytrace
                             if (new_dist < dist)
                             {
                                 dist = new_dist;
-                                c = localBuffer[l];
+                                isect.n = localBuffer[l];
+                                isect.rad = colors[k];
+                                //c = localBuffer[l];
                             }
                         }
                     }
@@ -210,11 +236,12 @@ kernel void raytrace
             if (dist < MIN_THRESHOLD)
             {
 //#ifndef SMOOTHING
-                if (!SMOOTHING)
-                    isect.n = normalize(hit_p - c);
+                // if (!SMOOTHING)
+                //     isect.n = normalize(hit_p - c);
 //#endif
                 isect.hit = true;
                 done = true;
+                //atomic_dec(&cnt);
                 //break;
             }
         
@@ -222,6 +249,7 @@ kernel void raytrace
             {
                 isect.hit = false;
                 done = true;
+                //atomic_dec(&cnt);
                 //break;
             }
         }
@@ -268,6 +296,10 @@ kernel void raytrace
             isect.n = normalize((float3)(dists[0] - dists[1], dists[2] - dists[3], dists[4] - dists[5]));
         }
 //#endif
+        else
+        {
+            isect.n = normalize(hit_p - isect.n);
+        }
         // if (xi >= width || yi >= height)
         //     continue;
 
@@ -300,6 +332,7 @@ kernel void raytrace
                 //     continue;
                 if (dot(wi, isect.n) < 0)
                     continue;
+                //radiance += isect.rad * rad * dot(wi, isect.n) / pdf / LIGHT_SAMPLES;
                 radiance += DIFFUSE_BSDF * rad * dot(wi, isect.n) / pdf / LIGHT_SAMPLES;
             }
             radiance += GLOBAL_ILLUMINATION;
