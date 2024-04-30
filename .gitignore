@@ -46,4 +46,14 @@ build
 xcode
 .vscode
 
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+point-e/point_e/examples/images
 CLGLInterop/assets/point-cloud-*
