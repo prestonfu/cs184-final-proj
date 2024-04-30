@@ -39,6 +39,8 @@ using namespace cl;
 #define EPS_F (0.00001f)
 #define MIN_R (0.1f)
 #define MAX_R (5.0f)
+#define LOCAL_WORK_SIZE 256
+#define SPHERE_RADIUS (0.01f)
 
 typedef unsigned int uint;
 
@@ -94,12 +96,15 @@ typedef struct {
     Device d;
     CommandQueue q;
     Program p;
-    Kernel k;
+    Kernel raytrace;
+    //Kernel project;
     ImageGL tex;
     cl_float3 cameraPos;
     Buffer c2w;
     Buffer spheres;
+    //Buffer projection;
     Buffer permutation;
+    Buffer bboxes;
     Buffer seed;
     size_t dims[3];
 } process_params;
@@ -117,7 +122,6 @@ typedef struct {
     float phi;
     float theta;
     float r;
-    float screenDist;
 } camera_state;
 
 typedef struct {
@@ -205,6 +209,42 @@ void computeCameraPosition()
     // cout << endl;
 }
 
+//[l, r)
+// void bvh(std::vector<float> &projection, std::vector<int> &permutation, int l, int r, int sortAxis)
+// {
+//     if (r - l <= 256)
+//         return;
+//     sort(permutation.begin() + l, permutation.begin() + r, [&](int a, int b) -> bool
+//         {
+//             return projection[4 * a + sortAxis] + projection[4 * a + 2 + sortAxis] < projection[4 * b + sortAxis] + projection[4 * b + 2 + sortAxis];
+//         });
+//     int m = (l + r) / 2;
+//     bvh(projection, permutation, l, m, 1 - sortAxis);
+//     bvh(projection, permutation, m, r, 1 - sortAxis);
+// }
+
+//https://developer.nvidia.com/blog/thinking-parallel-part-iii-tree-construction-gpu/
+unsigned int expandBits(unsigned int v)
+{
+    v = (v * 0x00010001u) & 0xFF0000FFu;
+    v = (v * 0x00000101u) & 0x0F00F00Fu;
+    v = (v * 0x00000011u) & 0xC30C30C3u;
+    v = (v * 0x00000005u) & 0x49249249u;
+    return v;
+}
+
+// Calculates a 30-bit Morton code for the
+// given 3D point located within the unit cube [0,1].
+unsigned int morton3D(float x, float y, float z)
+{
+    x = min(max(x * 1024.0f, 0.0f), 1023.0f);
+    y = min(max(y * 1024.0f, 0.0f), 1023.0f);
+    z = min(max(z * 1024.0f, 0.0f), 1023.0f);
+    unsigned int xx = expandBits((unsigned int)x);
+    unsigned int yy = expandBits((unsigned int)y);
+    unsigned int zz = expandBits((unsigned int)z);
+    return xx * 4 + yy * 2 + zz;
+}
 
 
 static void glfw_error_callback(int error, const char* desc)
@@ -382,16 +422,29 @@ int main()
         // Create a command queue and use the first device
         params.q = CommandQueue(context, params.d);
         
-        params.p = getProgram(context, ASSETS_DIR"/raytrace.cl",errCode);
+        // Set up program and kernels
+        ifstream kernelFile1(ASSETS_DIR"/raytrace.cl");
+        string kernelSource1((istreambuf_iterator<char>(kernelFile1)), istreambuf_iterator<char>());
+        //ifstream kernelFile2(ASSETS_DIR"/project.cl");
+        //string kernelSource2((istreambuf_iterator<char>(kernelFile2)), istreambuf_iterator<char>());
 
-        std::ostringstream options;
-        options << "-I " << std::string(ASSETS_DIR);
+        Program::Sources sources;
+        sources.push_back({ kernelSource1.c_str(), kernelSource1.length() });
+        //sources.push_back({ kernelSource2.c_str(), kernelSource2.length() });
+        params.p = Program(context, sources);
 
-        params.p.build(std::vector<Device>(1, params.d), options.str().c_str());
-        params.k = Kernel(params.p, "raytrace", &errCode);
+        //params.p = getProgram(context, ASSETS_DIR"/raytrace.cl",errCode);
+
+        //std::ostringstream options;
+        //options << "-I " << std::string(ASSETS_DIR);
+
+        //params.p.build(std::vector<Device>(1, params.d), options.str().c_str());
+        params.p.build(std::vector<Device>(1, params.d));
+        params.raytrace = Kernel(params.p, "raytrace");
+        //params.project = Kernel(params.p, "project");
 
         // int kernel_work_group_size;
-        // clGetKernelWorkGroupInfo(params.k.get(), NULL, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &kernel_work_group_size, NULL);
+        // clGetKernelWorkGroupInfo(params.raytrace.get(), NULL, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &kernel_work_group_size, NULL);
         // cout << "CL_KERNEL_WORK_GROUP_SIZE : " << kernel_work_group_size << std::endl;
 
         // create opengl stuff
@@ -432,7 +485,6 @@ int main()
         cam.r = 3;
         cam.hFov = 50;
         cam.vFov = 35;
-        cam.screenDist = 1;
 
         // Configure camera
         float ar1 = tan(radians(cam.hFov) / 2) / tan(radians(cam.vFov) / 2);
@@ -447,7 +499,6 @@ int main()
             // vFov is too small
             cam.vFov = 2 * degrees(atan(tan(radians(cam.hFov) / 2) / ar));
         }
-        cam.screenDist = ((double) wind_height) / (2.0 * tan(radians(cam.vFov) / 2));
 
         params.c2w = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 9);
         computeCameraPosition();
@@ -458,15 +509,13 @@ int main()
         params.seed = Buffer(context, CL_MEM_READ_WRITE, sizeof(int) * wind_width * wind_height);
         params.q.enqueueWriteBuffer(params.seed, CL_TRUE, 0, sizeof(int) * wind_width * wind_height, seed.data());
 
-        // std::vector<float> spheres(3 * nparticles);
-        // for (int i = 0; i < 3 * nparticles; i++)
-        // {
-        //     spheres[i] = 0;
-        // }
-        // spheres[3] = 0.5;
         params.spheres = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 3 * nparticles);
         loadPointCloud("shrek");
-        //params.q.enqueueWriteBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
+
+        //params.projection = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 4 * nparticles);      
+
+        params.permutation = Buffer(context, CL_MEM_READ_WRITE, sizeof(int) * nparticles);  
+        params.bboxes = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 6 * nparticles / LOCAL_WORK_SIZE);
 
         params.dims[0] = wind_width;
         params.dims[1] = wind_height;
@@ -524,20 +573,78 @@ void processTimeStep()
             std::cout<<"Failed acquiring GL object: "<<res<<std::endl;
             exit(248);
         }
+        float hFov_expr = 2 * tan(0.5 * cam.hFov * M_PI / 180);
+        float vFov_expr = 2 * tan(0.5 * cam.vFov * M_PI / 180);
+
+        // NDRange local(16);
+        // NDRange global(16 * divup(nparticles, 16));
+        // params.project.setArg(0, (uint)params.dims[0]);
+        // params.project.setArg(1, (uint)params.dims[1]);
+        // params.project.setArg(2, hFov_expr);
+        // params.project.setArg(3, vFov_expr);
+        // params.project.setArg(4, params.cameraPos);
+        // params.project.setArg(5, params.c2w);
+        // params.project.setArg(6, params.spheres);
+        // params.project.setArg(7, params.projection);
+        // params.q.enqueueNDRangeKernel(params.project, cl::NullRange, global, local);
+
+        // std::vector<float> projection(4 * nparticles);
+        // params.q.enqueueReadBuffer(params.projection, CL_TRUE, 0, sizeof(float) * 4 * nparticles, projection.data());
+        // params.q.finish();
+
+        std::vector<float> spheres(3 * nparticles);
+        params.q.enqueueReadBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
+        params.q.finish();
+
+        std::vector<int> permutation(nparticles), codes(nparticles);
+        for (int i = 0; i < nparticles; i++)
+        {
+            permutation[i] = i;
+            codes[i] = morton3D(spheres[3 * i], spheres[3 * i + 1], spheres[3 * i + 2]);
+        }
+
+        // could store permutation which could help if sort is efficient on nearly sorted lists
+        sort(permutation.begin(), permutation.begin(), [&codes](int a, int b) -> bool
+        {
+            return codes[a] < codes[b];
+        });
+        //bvh(projection, permutation, 0, nparticles, 0);
+
+        params.q.enqueueWriteBuffer(params.permutation, CL_TRUE, 0, sizeof(int) * nparticles, permutation.data());
+
+        std::vector<float> bboxes(6 * nparticles / LOCAL_WORK_SIZE);
+        for (int i = 0; i < nparticles / LOCAL_WORK_SIZE; i++)
+        {
+            bboxes[6 * i + 0] = bboxes[6 * i + 1] = bboxes[6 * i + 2] = INFINITY;
+            bboxes[6 * i + 3] = bboxes[6 * i + 4] = bboxes[6 * i + 5] = -INFINITY;
+            for (int j = 0; j < LOCAL_WORK_SIZE; j++)
+            {
+                int index = i * LOCAL_WORK_SIZE + j;
+                for (int k = 0; k < 3; k++)
+                {
+                    bboxes[6 * i + k] = min(bboxes[6 * i + k], spheres[3 * permutation[index] + k] - SPHERE_RADIUS);
+                    bboxes[6 * i + 3 + k] = max(bboxes[6 * i + 3 + k], spheres[3 * permutation[index] + k] + SPHERE_RADIUS);
+                }
+            }
+        }
+        params.q.enqueueWriteBuffer(params.bboxes, CL_TRUE, 0, sizeof(float) * 6 * nparticles / LOCAL_WORK_SIZE, bboxes.data());
+
         NDRange local(16, 16);
         NDRange global( local[0] * divup(params.dims[0], local[0]),
                         local[1] * divup(params.dims[1], local[1]));
         // set kernel arguments
-        params.k.setArg(0, params.tex);
-        params.k.setArg(1, (uint)params.dims[0]);
-        params.k.setArg(2, (uint)params.dims[1]);
-        params.k.setArg(3, cam.hFov);
-        params.k.setArg(4, cam.vFov);
-        params.k.setArg(5, params.cameraPos);
-        params.k.setArg(6, params.c2w);
-        params.k.setArg(7, params.spheres);
-        params.k.setArg(8, params.seed);
-        params.q.enqueueNDRangeKernel(params.k, cl::NullRange, global, local);
+        params.raytrace.setArg(0, params.tex);
+        params.raytrace.setArg(1, (uint)params.dims[0]);
+        params.raytrace.setArg(2, (uint)params.dims[1]);
+        params.raytrace.setArg(3, hFov_expr);
+        params.raytrace.setArg(4, vFov_expr);
+        params.raytrace.setArg(5, params.cameraPos);
+        params.raytrace.setArg(6, params.c2w);
+        params.raytrace.setArg(7, params.spheres);
+        params.raytrace.setArg(8, params.permutation);
+        params.raytrace.setArg(9, params.bboxes);
+        params.raytrace.setArg(10, params.seed);
+        params.q.enqueueNDRangeKernel(params.raytrace, cl::NullRange, global, local);
         // release opengl object
         res = params.q.enqueueReleaseGLObjects(&objs);
         ev.wait();

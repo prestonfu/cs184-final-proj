@@ -23,6 +23,9 @@
 
 #define EPS_F (0.00001f)
 
+#define randf(seed) ((float)(seed = (((long)(seed) * 16807) % 2147483647)) / 2147483647)
+
+
 typedef struct {
     float3 o;
     float3 d; //should be normalized
@@ -36,24 +39,38 @@ typedef struct {
     bool hit;
 } Intersection;
 
-#define randf(seed) ((float)(seed = (((long)(seed) * 16807) % 2147483647)) / 2147483647)
+//bbox_1[0] = min_x, bbox_1[1] = min_y, bbox_1[2] = min_z
+//bbox_2[0] = max_x, bbox_2[1] = max_y, bbox_2[2] = max_z
+bool intersect_bbox(Ray ray, float3 min_vals, float3 max_vals)
+{
+    float3 t_min_per_dim = (float3)(INFINITY, INFINITY, INFINITY);
+    // float3 t_max_per_dim = (float3)(-INFINITY, -INFINITY, -INFINITY);;
+    for (int i = 0; i < 3; i++) {
+        t_min_per_dim[i] = min(t_min_per_dim[i], (min_vals[i] - ray.o[i]) / ray.d[i]);
+        // t_max_per_dim[i] = max(t_max_per_dim[i], (max_vals[i] - ray.o[i]) / ray.d[i]);
+    }
+    float t_min = max(t_min_per_dim.x, min(t_min_per_dim.y, t_min_per_dim.z));
+    // float t_max = min(t_max_per_dim.x, min(t_max_per_dim.y, t_max_per_dim.z));
+    
+    return t_min != INFINITY; && t_max != INFINITY;
+}
 
 kernel void raytrace
 (
     write_only image2d_t out,
     const uint width,
     const uint height,
-    const float hFov,
-    const float vFov,
+    const float hFov_expr,
+    const float vFov_expr,
     const float3 camPos,
     global const float* c2w,
     global const float* spheres,
-    //global const int* permutation, //for sphere positions
+    global const int* permutation, //for sphere positions
+    global const float* bboxes,
     global int* seedMemory
 )
 {    
     local float3 localBuffer[WORK_GROUP_SIZE];
-
     const uint xi = get_global_id(0);
     const uint yi = get_global_id(1);
     const uint lid = get_local_id(1) * get_local_size(0) + get_local_id(0);
@@ -72,7 +89,7 @@ kernel void raytrace
     {
         float x = (xi + randf(seed)) / width;
         float y = 1 - (yi + randf(seed)) / height;
-        float3 vec = (float3)(2 * (x - 0.5) * tan(0.5 * hFov * M_PI / 180), 2 * (y - 0.5) * tan(0.5 * vFov * M_PI / 180), -1);
+        float3 vec = (float3)((x - 0.5) * hFov_expr, (y - 0.5) * vFov_expr, -1);
         float3 res = vec.x * c2w_0 + vec.y * c2w_1 + vec.z * c2w_2;
 
         Ray r;
@@ -92,6 +109,8 @@ kernel void raytrace
             float3 c;
             for (int k = 0; k < SPHERE_COUNT; k += WORK_GROUP_SIZE)
             {
+                
+
                 if (k + lid < SPHERE_COUNT)
                     localBuffer[lid] = (float3)(spheres[3 * (k + lid)], spheres[3 * (k + lid) + 1], spheres[3 * (k + lid) + 2]);
                 else
