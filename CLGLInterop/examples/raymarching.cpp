@@ -97,8 +97,9 @@ typedef struct {
     Kernel k;
     ImageGL tex;
     cl_float3 cameraPos;
-    Buffer spheres;
     Buffer c2w;
+    Buffer spheres;
+    Buffer permutation;
     Buffer seed;
     size_t dims[3];
 } process_params;
@@ -203,6 +204,7 @@ void computeCameraPosition()
     //     cout << params.cameraPos.s[i] << " ";
     // cout << endl;
 }
+
 
 
 static void glfw_error_callback(int error, const char* desc)
@@ -387,6 +389,10 @@ int main()
 
         params.p.build(std::vector<Device>(1, params.d), options.str().c_str());
         params.k = Kernel(params.p, "raytrace", &errCode);
+
+        // int kernel_work_group_size;
+        // clGetKernelWorkGroupInfo(params.k.get(), NULL, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &kernel_work_group_size, NULL);
+        // cout << "CL_KERNEL_WORK_GROUP_SIZE : " << kernel_work_group_size << std::endl;
 
         // create opengl stuff
         rparams.prg = initShaders(ASSETS_DIR"/fractal.vert", ASSETS_DIR "/fractal.frag");
