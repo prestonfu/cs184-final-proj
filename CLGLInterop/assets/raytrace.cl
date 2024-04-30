@@ -1,9 +1,9 @@
-#define SPHERE_RADIUS 0.01
-#define SPHERE_COUNT 4096
-#define MIN_THRESHOLD (0.0001f)
-#define MAX_THRESHOLD 100
-#define NUM_ITERATIONS 50
-#define WORK_GROUP_SIZE 256
+#define SPHERE_RADIUS 0.02
+#define SPHERE_COUNT 1024
+#define MIN_THRESHOLD (0.001f)
+#define MAX_THRESHOLD 10
+#define NUM_ITERATIONS 25
+#define WORK_GROUP_SIZE 64
 
 #define NCLIP 0
 #define FCLIP 4
@@ -16,14 +16,19 @@
 #define AREA_LIGHT_AREA 4 //make sure this matches dimx * dimy
 #define AREA_LIGHT_RADIANCE (float3)(1, 1, 1)
 
-#define GLOBAL_ILLUMINATION (float3)(0.1, 0.1, 0.1)
+#define GLOBAL_ILLUMINATION (float3)(0.2, 0.2, 0.2)
 
 #define NUM_RAYS 1
-#define LIGHT_SAMPLES 1
+#define LIGHT_SAMPLES 4
 
 #define EPS_F (0.00001f)
+#define EPS_GRAD (0.0001f)
+
+#define K_SMOOTH (0.001f)
 
 #define randf(seed) ((float)(seed = (((long)(seed) * 16807) % 2147483647)) / 2147483647)
+
+#define SMOOTHING true
 
 
 typedef struct {
@@ -41,18 +46,35 @@ typedef struct {
 
 //bbox_1[0] = min_x, bbox_1[1] = min_y, bbox_1[2] = min_z
 //bbox_2[0] = max_x, bbox_2[1] = max_y, bbox_2[2] = max_z
-bool intersect_bbox(Ray ray, float3 min_vals, float3 max_vals)
+bool intersect_bbox(Ray r, float3 min_vals, float3 max_vals)
 {
-    float3 t_min_per_dim = (float3)(INFINITY, INFINITY, INFINITY);
+    // float3 t_min_per_dim = (float3)(INFINITY, INFINITY, INFINITY);
     // float3 t_max_per_dim = (float3)(-INFINITY, -INFINITY, -INFINITY);;
-    for (int i = 0; i < 3; i++) {
-        t_min_per_dim[i] = min(t_min_per_dim[i], (min_vals[i] - ray.o[i]) / ray.d[i]);
-        // t_max_per_dim[i] = max(t_max_per_dim[i], (max_vals[i] - ray.o[i]) / ray.d[i]);
-    }
-    float t_min = max(t_min_per_dim.x, min(t_min_per_dim.y, t_min_per_dim.z));
+    // for (int i = 0; i < 3; i++)
+    // {
+    //     t_min_per_dim[i] = min(t_min_per_dim[i], (ray.d[i] == 0) ? INFINITY : (min_vals[i] - ray.o[i]) / ray.d[i]);
+    //     t_max_per_dim[i] = max(t_max_per_dim[i], (ray.d[i] == 0) ? -INFINITY : (max_vals[i] - ray.o[i]) / ray.d[i]);
+    // }
+    // float t_min = max(t_min_per_dim.x, min(t_min_per_dim.y, t_min_per_dim.z));
     // float t_max = min(t_max_per_dim.x, min(t_max_per_dim.y, t_max_per_dim.z));
     
-    return t_min != INFINITY; && t_max != INFINITY;
+    // return t_min != INFINITY && t_max != -INFINITY;
+
+    float t0 = r.mint;
+    float t1 = r.maxt;
+    for (int i = 0; i < 3; i++)
+    {
+        const float recip = 1 / r.d[i];
+        t0 = max(t0, min((min_vals[i] - r.o[i]) * recip, (max_vals[i] - r.o[i]) * recip));
+        t1 = min(t1, max((min_vals[i] - r.o[i]) * recip, (max_vals[i] - r.o[i]) * recip));
+    }
+    return t1 >= t0;
+}
+
+float smooth_min(float distA, float distB)
+{
+    float h = max(K_SMOOTH - fabs(distA - distB), 0.0f) / K_SMOOTH;
+    return min(distA, distB) - h * h * h * K_SMOOTH * 1 / 6.0f;
 }
 
 kernel void raytrace
@@ -69,14 +91,15 @@ kernel void raytrace
     global const float* bboxes,
     global int* seedMemory
 )
-{    
+{
     local float3 localBuffer[WORK_GROUP_SIZE];
+    local ushort localFlags[WORK_GROUP_SIZE];
     const uint xi = get_global_id(0);
     const uint yi = get_global_id(1);
     const uint lid = get_local_id(1) * get_local_size(0) + get_local_id(0);
     //const uint localSize = get_local_size(0) * get_local_size(1);
-    if (xi >= width || yi >= height)
-        return; //if we use local memory we may need these threads still to copy data
+    // if (xi >= width || yi >= height)
+    //     return; //if we use local memory we may need these threads still to copy data
 
     uint id = yi * width + xi;
     int seed = id;
@@ -103,36 +126,66 @@ kernel void raytrace
         isect.hit = false;
     
         float3 hit_p = r.o + isect.t * r.d;
+        bool done = false;
         for (int j = 0; j < NUM_ITERATIONS; j++)
         {
             float dist = MAX_THRESHOLD;
             float3 c;
-            for (int k = 0; k < SPHERE_COUNT; k += WORK_GROUP_SIZE)
+            localFlags[lid] = 0;
+            if (!done)
             {
-                
+                for (int k = 0; k < SPHERE_COUNT / WORK_GROUP_SIZE; k++)
+                {
+                    if (intersect_bbox(r, (float3)(bboxes[6 * k], bboxes[6 * k + 1], bboxes[6 * k + 2]), (float3)(bboxes[6 * k + 3], bboxes[6 * k + 4], bboxes[6 * k + 5])))
+                        localFlags[lid] |= (1 << k);
+                }
+            }
 
-                if (k + lid < SPHERE_COUNT)
-                    localBuffer[lid] = (float3)(spheres[3 * (k + lid)], spheres[3 * (k + lid) + 1], spheres[3 * (k + lid) + 2]);
-                else
-                    localBuffer[lid] = (float3)(INFINITY, INFINITY, INFINITY);
+            barrier(CLK_LOCAL_MEM_FENCE);
+
+            ushort res = 0;
+            for (int k = 0; k < WORK_GROUP_SIZE; k++)
+                res |= localFlags[k];
+
+            if (res == 0)
+                break;
+
+            for (int k = 0; k < SPHERE_COUNT / WORK_GROUP_SIZE; k++)
+            {
+                if ((res & (1 << k)) == 0)
+                    continue;
+                int index = permutation[k * WORK_GROUP_SIZE + lid];
+                //int index = k * WORK_GROUP_SIZE + lid;
+                //if (index < SPHERE_COUNT)
+                    localBuffer[lid] = (float3)(spheres[3 * index], spheres[3 * index + 1], spheres[3 * index + 2]);
+                //else
+                //    localBuffer[lid] = (float3)(INFINITY, INFINITY, INFINITY);
 
                 barrier(CLK_LOCAL_MEM_FENCE);
 
-                for (uint l = 0; l < WORK_GROUP_SIZE; l++)
+                if (!done)
                 {
-                    float3 disp = hit_p - localBuffer[l];
-                    float new_dist = disp.x * disp.x + disp.y * disp.y + disp.z * disp.z;
-                    //float new_dist = //length(hit_p - center) - SPHERE_RADIUS;
-
-                    if (new_dist < dist)
+                    for (uint l = 0; l < WORK_GROUP_SIZE; l++)
                     {
-                        dist = new_dist;
-                        c = localBuffer[l];
+                        float3 disp = hit_p - localBuffer[l];
+                        float new_dist = disp.x * disp.x + disp.y * disp.y + disp.z * disp.z;
+                        //float new_dist = fast_length(hit_p - localBuffer[l]) - SPHERE_RADIUS;
+
+                        if (SMOOTHING)
+                            dist = smooth_min(dist, new_dist);
+                        
+                        else if (new_dist < dist)
+                        {
+                            dist = new_dist;
+                            c = localBuffer[l];
+                        }
                     }
                 }
 
                 barrier(CLK_LOCAL_MEM_FENCE);
             }
+            if (done)
+                continue;            
             // for (uint k = 0; k < SPHERE_COUNT; k++)
             // {
             //     float3 center = (float3)(spheres[3 * k], spheres[3 * k + 1], spheres[3 * k + 2]);
@@ -152,18 +205,67 @@ kernel void raytrace
 
             if (dist < MIN_THRESHOLD)
             {
-                isect.n = normalize(hit_p - c);
+//#ifndef SMOOTHING
+                if (!SMOOTHING)
+                    isect.n = normalize(hit_p - c);
+//#endif
                 isect.hit = true;
-                break;
+                done = true;
+                //break;
             }
         
-            if (isect.t > r.maxt || dist > MAX_THRESHOLD )
+            if (isect.t > r.maxt)
             {
                 isect.hit = false;
-                break;
+                done = true;
+                //break;
             }
         }
-       
+
+#ifdef SMOOTHING
+        if (SMOOTHING)
+        {
+        // Calculate normal
+        float3 hits[6] = {hit_p, hit_p, hit_p, hit_p, hit_p, hit_p};
+        hits[0].x += EPS_GRAD;
+        hits[1].x -= EPS_GRAD;
+        hits[2].y += EPS_GRAD;
+        hits[3].y -= EPS_GRAD;
+        hits[4].z += EPS_GRAD;
+        hits[5].z -= EPS_GRAD;
+        float dists[6] = {MAX_THRESHOLD, MAX_THRESHOLD, MAX_THRESHOLD, MAX_THRESHOLD, MAX_THRESHOLD, MAX_THRESHOLD};
+        for (int k = 0; k < SPHERE_COUNT / WORK_GROUP_SIZE; k++)
+        {
+            int index = k * WORK_GROUP_SIZE + lid;
+            localBuffer[lid] = (float3)(spheres[3 * index], spheres[3 * index + 1], spheres[3 * index + 2]);
+
+            barrier(CLK_LOCAL_MEM_FENCE);
+
+            if (isect.hit)
+            {
+                for (uint l = 0; l < WORK_GROUP_SIZE; l++)
+                {
+                    for (int j = 0; j < 6; j++)
+                    {
+                        float3 disp = hits[j] - localBuffer[l];
+                        float new_dist = disp.x * disp.x + disp.y * disp.y + disp.z * disp.z;
+
+                        dists[j] = smooth_min(dists[j], new_dist);
+                    }
+                }
+            }
+
+            barrier(CLK_LOCAL_MEM_FENCE);
+        }
+        for (int j = 0; j < 6; j++)
+            dists[j] = sqrt(dists[j]) - SPHERE_RADIUS;
+
+        isect.n = normalize((float3)(dists[0] - dists[1], dists[2] - dists[3], dists[4] - dists[5]));
+        }
+#endif
+        // if (xi >= width || yi >= height)
+        //     continue;
+
         if (isect.hit)
         {
             float3 hit_p = r.o + r.d * isect.t;

@@ -228,7 +228,25 @@ int main(void)
     glfwSetFramebufferSizeCallback(window,glfw_framebuffer_size_callback);
 
     float previousTime = glfwGetTime();
+
+    double prev_time = 0.0;
+    double curr_time = 0.0;
+    double time_diff;
+    unsigned int counter = 0;
+
     while (!glfwWindowShouldClose(window)) {
+        curr_time = glfwGetTime();
+        time_diff = curr_time - prev_time;
+        counter ++;
+        if (time_diff >= 1.0 / 30.0) 
+        {
+            std::string FPS = std::to_string((1.0 / time_diff) * counter);
+            std::string ms = std::to_string((time_diff / counter) * 1000);
+            std::string newTitle = "Boids - " + FPS + "FPS / " + ms + "ms";
+            glfwSetWindowTitle(window, newTitle.c_str());
+            prev_time = curr_time;
+            counter = 0;
+        }
         float currentTime = glfwGetTime();
         // process call
         processTimeStep(currentTime - previousTime);

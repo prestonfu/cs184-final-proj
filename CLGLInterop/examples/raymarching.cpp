@@ -39,8 +39,8 @@ using namespace cl;
 #define EPS_F (0.00001f)
 #define MIN_R (0.1f)
 #define MAX_R (5.0f)
-#define LOCAL_WORK_SIZE 256
-#define SPHERE_RADIUS (0.01f)
+#define LOCAL_WORK_SIZE 64
+#define SPHERE_RADIUS (0.02f)
 
 typedef unsigned int uint;
 
@@ -89,7 +89,7 @@ static map<string, std::vector<float>> pointClouds;
 
 static int wind_width = 640;
 static int wind_height= 480;
-static int const nparticles = 4096;
+static int const nparticles = 1024;
 static int gJuliaSetIndex = 0;
 
 typedef struct {
@@ -535,7 +535,25 @@ int main()
 
     mouse.pressed = false;
 
+    double prev_time = 0.0;
+    double curr_time = 0.0;
+    double time_diff;
+    unsigned int counter = 0;
+
     while (!glfwWindowShouldClose(window)) {
+
+        curr_time = glfwGetTime();
+        time_diff = curr_time - prev_time;
+        counter ++;
+        if (time_diff >= 1.0 / 30.0) 
+        {
+            std::string FPS = std::to_string((1.0 / time_diff) * counter);
+            std::string ms = std::to_string((time_diff / counter) * 1000);
+            std::string newTitle = "Ray Marching - " + FPS + "FPS / " + ms + "ms";
+            glfwSetWindowTitle(window, newTitle.c_str());
+            prev_time = curr_time;
+            counter = 0;
+        }
         // process call
         processTimeStep();
         // render call
@@ -596,7 +614,8 @@ void processTimeStep()
         params.q.enqueueReadBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
         params.q.finish();
 
-        std::vector<int> permutation(nparticles), codes(nparticles);
+        std::vector<int> permutation(nparticles);
+        std::vector<uint> codes(nparticles);
         for (int i = 0; i < nparticles; i++)
         {
             permutation[i] = i;
@@ -604,7 +623,7 @@ void processTimeStep()
         }
 
         // could store permutation which could help if sort is efficient on nearly sorted lists
-        sort(permutation.begin(), permutation.begin(), [&codes](int a, int b) -> bool
+        sort(permutation.begin(), permutation.end(), [&codes](int a, int b) -> bool
         {
             return codes[a] < codes[b];
         });
@@ -629,7 +648,7 @@ void processTimeStep()
         }
         params.q.enqueueWriteBuffer(params.bboxes, CL_TRUE, 0, sizeof(float) * 6 * nparticles / LOCAL_WORK_SIZE, bboxes.data());
 
-        NDRange local(16, 16);
+        NDRange local(8, 8);
         NDRange global( local[0] * divup(params.dims[0], local[0]),
                         local[1] * divup(params.dims[1], local[1]));
         // set kernel arguments
