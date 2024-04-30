@@ -41,8 +41,10 @@ CMakeSettings.json
 *.exe
 *.out
 *.app
+
 build
 xcode
+.vscode
 
 # Environments
 .env
@@ -54,3 +56,4 @@ env.bak/
 venv.bak/
 
 point-e/point_e/examples/images
+CLGLInterop/assets/point-cloud-*
