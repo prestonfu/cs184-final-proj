@@ -1,5 +1,5 @@
-#define SPHERE_RADIUS 0.0075
-#define SPHERE_COUNT 4096
+#define SPHERE_RADIUS 0.015
+#define SPHERE_COUNT 512
 #define WORK_GROUP_SIZE 256
 
 #define NCLIP 0
@@ -17,7 +17,7 @@
 #define GLOBAL_ILLUMINATION_M (float3)(0.2, 0.2, 0.2)
 
 #define NUM_RAYS 1
-#define LIGHT_SAMPLES 4
+#define LIGHT_SAMPLES 16
 #define LIGHT_SAMPLES_M 1
 
 #define EPS_F (0.00001f)

@@ -46,7 +46,9 @@ using namespace cl;
 #define LOCAL_WORK_SIZE_Y 16
 #define SPHERE_RADIUS (0.0075f)
 #define SPHERE_COUNT 4096
-#define MARCH
+//#define MARCH
+
+#define OFFSET 16
 
 //#define PROFILE INFINITY
 #define PROFILE 500
@@ -84,8 +86,8 @@ static const uint indices[6] = {0,1,2,0,2,3};
 
 static map<string, pair<std::vector<float>, std::vector<float>>> pointClouds;
 
-static int wind_width = 800;//640;
-static int wind_height= 600;//480;
+static int wind_width = 1280;//640;
+static int wind_height= 960;//480;
 static int const nparticles = SPHERE_COUNT;
 static int selectedIndex = -1;
 static bool paused = false;
@@ -162,7 +164,7 @@ void loadPointCloud(int index)
         cout << "model unloaded \n";
         return;
     }
-    string name = pointCloudNames[index];
+    string name = pointCloudNames[OFFSET + index];
     //name = "shrek";
     if (pointClouds.count(name) == 0)
     {
@@ -678,7 +680,7 @@ int main()
         {
             std::string FPS = std::to_string((1.0 / time_diff) * counter).substr(0, 4);
             std::string ms = std::to_string((time_diff / counter) * 1000).substr(0, 4);
-            std::string newTitle = "Boids - " + FPS + "FPS / " + ms + "ms - " + (selectedIndex == -1 ? "flocking" : pointCloudNames[selectedIndex]);
+            std::string newTitle = "Boids - " + FPS + "FPS / " + ms + "ms - " + (selectedIndex == -1 ? "flocking" : pointCloudNames[OFFSET + selectedIndex]);
             glfwSetWindowTitle(window, newTitle.c_str());
             prev_time = curr_time;
             counter = 0;
@@ -848,32 +850,32 @@ void processTimeStep(float deltaTime, int cnt)
         params.q.enqueueReadBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
         params.q.finish();
 
-        bvh(spheres, permutation, 0, nparticles);
+        //bvh(spheres, permutation, 0, nparticles);
 
-        // float minx = spheres[0], miny = spheres[1], minz = spheres[2];
-        // float maxx = spheres[0], maxy = spheres[1], maxz = spheres[2];
-        // for (int i = 1; i < nparticles; i++)
-        // {
-        //     minx = min(minx, spheres[3 * i]);
-        //     maxx = max(maxx, spheres[3 * i]);
-        //     miny = min(miny, spheres[3 * i + 1]);
-        //     maxy = max(maxy, spheres[3 * i + 1]);
-        //     minz = min(minz, spheres[3 * i + 2]);
-        //     maxz = max(maxz, spheres[3 * i + 2]);
-        // }
-        // maxx -= minx;
-        // maxy -= miny;
-        // maxz -= minz;
+        float minx = spheres[0], miny = spheres[1], minz = spheres[2];
+        float maxx = spheres[0], maxy = spheres[1], maxz = spheres[2];
+        for (int i = 1; i < nparticles; i++)
+        {
+            minx = min(minx, spheres[3 * i]);
+            maxx = max(maxx, spheres[3 * i]);
+            miny = min(miny, spheres[3 * i + 1]);
+            maxy = max(maxy, spheres[3 * i + 1]);
+            minz = min(minz, spheres[3 * i + 2]);
+            maxz = max(maxz, spheres[3 * i + 2]);
+        }
+        maxx -= minx;
+        maxy -= miny;
+        maxz -= minz;
 
-        // for (int i = 0; i < nparticles; i++)
-        // {
-        //     codes[i] = morton3D((spheres[3 * i] - minx) / maxx, (spheres[3 * i + 1] - miny) / maxy, (spheres[3 * i + 2] - minz) / maxz);
-        // }
+        for (int i = 0; i < nparticles; i++)
+        {
+            codes[i] = morton3D((spheres[3 * i] - minx) / maxx, (spheres[3 * i + 1] - miny) / maxy, (spheres[3 * i + 2] - minz) / maxz);
+        }
 
-        // sort(permutation.begin(), permutation.end(), [](int a, int b) -> bool
-        // {
-        //     return codes[a] < codes[b];
-        // });
+        sort(permutation.begin(), permutation.end(), [](int a, int b) -> bool
+        {
+            return codes[a] < codes[b];
+        });
 
         if (PROFILE != INFINITY && cnt % (int) PROFILE == 0) {
             auto end_bvh_time = std::chrono::high_resolution_clock::now();

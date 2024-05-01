@@ -3,7 +3,7 @@
 #define MIN_THRESHOLD (0.001f)
 #define MAX_THRESHOLD 10
 #define NUM_ITERATIONS 40
-#define WORK_GROUP_SIZE 64
+#define WORK_GROUP_SIZE 256
 
 #define NCLIP 0
 #define FCLIP 4
