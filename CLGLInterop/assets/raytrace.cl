@@ -1,15 +1,12 @@
-#define SPHERE_RADIUS 0.02
-#define SPHERE_COUNT 256
-#define MIN_THRESHOLD (0.001f)
-#define MAX_THRESHOLD 10
-#define NUM_ITERATIONS 40
-#define WORK_GROUP_SIZE 256
+#define SPHERE_RADIUS 0.015
+#define SPHERE_COUNT 512
+#define WORK_GROUP_SIZE 64
 
 #define NCLIP 0
 #define FCLIP 4
 
-#define DIFFUSE_BSDF (float3)(1, 1, 1) //includes color
-#define AREA_LIGHT_POS (float3)(0, 2, 0)
+#define DIFFUSE_BSDF (float3)(0.6, 0.6, 0.6) //includes color
+#define AREA_LIGHT_POS (float3)(0, 1.5, 0)
 #define AREA_LIGHT_DIR (float3)(0, -1, 0)
 #define AREA_LIGHT_DIMX (float3)(0.5, 0, 0)
 #define AREA_LIGHT_DIMY (float3)(0, 0, 0.5)
@@ -17,9 +14,11 @@
 #define AREA_LIGHT_RADIANCE (float3)(1, 1, 1)
 
 #define GLOBAL_ILLUMINATION (float3)(0.05, 0.05, 0.05)
+#define GLOBAL_ILLUMINATION_M (float3)(0.2, 0.2, 0.2)
 
 #define NUM_RAYS 1
 #define LIGHT_SAMPLES 16
+#define LIGHT_SAMPLES_M 1
 #define NUM_BOUNCES 0
 
 #define EPS_F (0.00001f)
@@ -30,6 +29,14 @@
 #define RAY_CAMERA 0
 #define RAY_LIGHT 1
 #define RAY_BOUNCE 2
+
+#define MIN_THRESHOLD (0.001f)
+#define MAX_THRESHOLD 10
+#define NUM_ITERATIONS 20
+
+#define K_SMOOTH (0.06f)
+#define EPS_GRAD (0.001f)
+#define EPS_BBOX (0.01f)
 
 typedef struct {
     float3 o;
@@ -61,6 +68,12 @@ bool intersect_bbox(Ray r, float3 min_vals, float3 max_vals)
     return t1 >= t0;
 }
 
+inline float smooth_min(float distA, float distB)
+{
+    float h = max(K_SMOOTH - fabs(distA - distB), 0.0f) * 1 / K_SMOOTH;
+    return min(distA, distB) - h * h * h * K_SMOOTH * 1 / 6.0f;
+}
+
 kernel void raytrace
 (
     write_only image2d_t out,
@@ -85,9 +98,6 @@ kernel void raytrace
     const uint xi = get_global_id(0);
     const uint yi = get_global_id(1);
     const uint lid = get_local_id(1) * get_local_size(0) + get_local_id(0);
-    //const uint localSize = get_local_size(0) * get_local_size(1);
-    // if (xi >= width || yi >= height)
-    //     return; //if we use local memory we may need these threads still to copy data
 
     uint id = yi * width + xi;
     int seed = id;
@@ -219,6 +229,18 @@ kernel void raytrace
             barrier(CLK_LOCAL_MEM_FENCE);
         }
 
+        if (!isect.hit)
+        {
+            float t = (AREA_LIGHT_POS.y - r.o.y) / r.d.y;
+            float3 p = r.o + r.d * t;
+            if (t > 0 && fabs(p.x) < AREA_LIGHT_DIMX.x && fabs(p.z) < AREA_LIGHT_DIMY.y)
+            {
+                //isect.hit = true;
+                active = false;
+                radiance += AREA_LIGHT_RADIANCE;
+            }
+        }
+
         // Finish intersection
 
         if (r.type == RAY_CAMERA)
@@ -273,6 +295,183 @@ kernel void raytrace
         //         // radiance += isect.rad * rad * dot(wi, isect.n) / pdf / LIGHT_SAMPLES;
         //     //radiance += GLOBAL_ILLUMINATION;
         // }
+    }
+    radiance /= NUM_RAYS;
+    
+    write_imagef(out, (int2)(xi, yi), (float4)(radiance, 1.0));
+    seedMemory[id] = seed;
+}
+
+kernel void raymarch
+(
+    write_only image2d_t out,
+    const uint width,
+    const uint height,
+    const float hFov_expr,
+    const float vFov_expr,
+    const float3 camPos,
+    const int selectedIndex,
+    global const float* c2w,
+    global const float* spheres,
+    global const int* permutation, //for sphere positions
+    global const float* bboxes,
+    global const float* color,
+    global int* seedMemory
+)
+{
+    local float3 localBuffer[WORK_GROUP_SIZE];
+    local ushort localFlags[WORK_GROUP_SIZE];
+
+    const uint xi = get_global_id(0);
+    const uint yi = get_global_id(1);
+    const uint lid = get_local_id(1) * get_local_size(0) + get_local_id(0);
+
+    uint id = yi * width + xi;
+    int seed = id;
+    float3 c2w_0 = (float3)(c2w[0], c2w[3], c2w[6]);
+    float3 c2w_1 = (float3)(c2w[1], c2w[4], c2w[7]);
+    float3 c2w_2 = (float3)(c2w[2], c2w[5], c2w[8]);
+    
+    float3 radiance = (float3)(0, 0, 0);
+    for (int i = 0; i < NUM_RAYS; i++)
+    {
+        float x = (xi + randf(seed)) / width;
+        float y = 1 - (yi + randf(seed)) / height;
+        float3 vec = (float3)((x - 0.5) * hFov_expr, (y - 0.5) * vFov_expr, -1);
+        float3 res = vec.x * c2w_0 + vec.y * c2w_1 + vec.z * c2w_2;
+
+        Ray r;
+        r.o = camPos;
+        r.d = normalize(res);
+        r.mint = NCLIP;
+        r.maxt = FCLIP;
+
+        localFlags[lid] = 0;
+        for (int k = 0; k < SPHERE_COUNT / WORK_GROUP_SIZE; k++)
+        {
+            if (intersect_bbox(r, (float3)(bboxes[6 * k] - EPS_BBOX, bboxes[6 * k + 1] - EPS_BBOX, bboxes[6 * k + 2] - EPS_BBOX), 
+                                  (float3)(bboxes[6 * k + 3] + EPS_BBOX, bboxes[6 * k + 4] + EPS_BBOX, bboxes[6 * k + 5] + EPS_BBOX)))
+                localFlags[lid] |= (1 << k);
+        }
+
+        barrier(CLK_LOCAL_MEM_FENCE);
+
+        ushort flags = 0;
+        for (int k = 0; k < WORK_GROUP_SIZE; k++)
+            flags |= localFlags[k];
+
+        Intersection isect;
+        isect.t = r.mint;
+        isect.hit = false;
+    
+        float3 hit_p = r.o + isect.t * r.d;
+        bool done = false;
+        for (int j = 0; j < NUM_ITERATIONS; j++)
+        {
+            float dist = MAX_THRESHOLD;
+            
+            for (int k = 0; k < SPHERE_COUNT / WORK_GROUP_SIZE; k++)
+            {
+                if ((flags & (1 << k)) == 0 || (selectedIndex != -1 && k != selectedIndex))
+                    continue;
+                int index = permutation[k * WORK_GROUP_SIZE + lid];
+
+                localBuffer[lid] = (float3)(spheres[3 * index], spheres[3 * index + 1], spheres[3 * index + 2]);
+
+                barrier(CLK_LOCAL_MEM_FENCE);
+
+                if (!done)
+                {
+                    for (uint l = 0; l < WORK_GROUP_SIZE; l++)
+                    {
+                            dist = smooth_min(dist, fast_length(hit_p - localBuffer[l]) - SPHERE_RADIUS);
+                    }
+                }
+
+                barrier(CLK_LOCAL_MEM_FENCE);
+            }
+            if (done)
+                continue;
+            isect.t += dist;
+            hit_p = r.o + isect.t * r.d;
+
+            if (dist < MIN_THRESHOLD)
+            {
+                isect.hit = true;
+                done = true;
+            }
+        
+            if (isect.t > r.maxt)
+            {
+                isect.hit = false;
+                done = true;
+            }
+        }
+        // Calculate normal
+        float3 hits[6] = {hit_p, hit_p, hit_p, hit_p, hit_p, hit_p};
+        hits[0].x += EPS_GRAD;
+        hits[1].x -= EPS_GRAD;
+        hits[2].y += EPS_GRAD;
+        hits[3].y -= EPS_GRAD;
+        hits[4].z += EPS_GRAD;
+        hits[5].z -= EPS_GRAD;
+        float dists[6] = {MAX_THRESHOLD, MAX_THRESHOLD, MAX_THRESHOLD, MAX_THRESHOLD, MAX_THRESHOLD, MAX_THRESHOLD};
+        for (int k = 0; k < SPHERE_COUNT / WORK_GROUP_SIZE; k++)
+        {
+            int index = k * WORK_GROUP_SIZE + lid;
+            localBuffer[lid] = (float3)(spheres[3 * index], spheres[3 * index + 1], spheres[3 * index + 2]);
+
+            barrier(CLK_LOCAL_MEM_FENCE);
+
+            if (isect.hit)
+            {
+                for (uint l = 0; l < WORK_GROUP_SIZE; l++)
+                {
+                    for (int j = 0; j < 6; j++)
+                    {
+                        float3 disp = hits[j] - localBuffer[l];
+                        float new_dist = fast_length(disp) - SPHERE_RADIUS;
+
+                        dists[j] = smooth_min(dists[j], new_dist);
+                    }
+                }
+            }
+
+            barrier(CLK_LOCAL_MEM_FENCE);
+        }
+
+        isect.n = normalize((float3)(dists[0] - dists[1], dists[2] - dists[3], dists[4] - dists[5]));
+
+        if (isect.hit)
+        {
+            float3 hit_p = r.o + r.d * isect.t;
+            for (int j = 0; j < LIGHT_SAMPLES_M; j++)
+            {
+                float2 sample = (float2)(randf(seed) - 0.5, randf(seed) - 0.5);
+                float3 d = AREA_LIGHT_POS + sample.x * AREA_LIGHT_DIMX + sample.y * AREA_LIGHT_DIMY - hit_p;
+                float cosTheta = dot(d, AREA_LIGHT_DIR);
+                float sqDist = d.x * d.x + d.y * d.y + d.z * d.z;
+                float dist = sqrt(sqDist);
+
+                if (cosTheta > 0)
+                    continue;
+
+                float3 wi = d / dist;
+                float pdf = sqDist / (AREA_LIGHT_AREA * -cosTheta);
+                float3 rad = AREA_LIGHT_RADIANCE;
+
+                Ray ray;
+                ray.o = hit_p;
+                ray.d = wi;
+                ray.mint = EPS_F;
+                ray.maxt = dist - EPS_F;
+
+                if (dot(wi, isect.n) < 0)
+                    continue;
+                radiance += DIFFUSE_BSDF * rad * dot(wi, isect.n) / pdf / LIGHT_SAMPLES_M;
+            }
+            radiance += GLOBAL_ILLUMINATION;
+        }
     }
     radiance /= NUM_RAYS;
     write_imagef(out, (int2)(xi, yi), (float4)(radiance, 1.0));

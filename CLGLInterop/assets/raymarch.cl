@@ -1,33 +1,33 @@
-#define SPHERE_RADIUS 0.01
-#define SPHERE_COUNT 4096
+//#define SPHERE_RADIUS 0.015
+//#define SPHERE_COUNT 512
 #define MIN_THRESHOLD (0.001f)
 #define MAX_THRESHOLD 10
 #define NUM_ITERATIONS 40
-#define WORK_GROUP_SIZE 256
+//#define WORK_GROUP_SIZE 64
 
-#define NCLIP 0
-#define FCLIP 4
+//#define NCLIP 0
+//#define FCLIP 4
 
 #define DIFFUSE_BSDF (float3)(1, 1, 1) //includes color
-#define AREA_LIGHT_POS (float3)(0, 2, 0)
-#define AREA_LIGHT_DIR (float3)(0, -1, 0)
-#define AREA_LIGHT_DIMX (float3)(2, 0, 0)
-#define AREA_LIGHT_DIMY (float3)(0, 0, 2)
-#define AREA_LIGHT_AREA 4 //make sure this matches dimx * dimy
-#define AREA_LIGHT_RADIANCE (float3)(1, 1, 1)
+// #define AREA_LIGHT_POS (float3)(0, 2, 0)
+// #define AREA_LIGHT_DIR (float3)(0, -1, 0)
+// #define AREA_LIGHT_DIMX (float3)(0.5, 0, 0)
+// #define AREA_LIGHT_DIMY (float3)(0, 0, 0.5)
+// #define AREA_LIGHT_AREA 4 //make sure this matches dimx * dimy
+// #define AREA_LIGHT_RADIANCE (float3)(1, 1, 1)
 
-#define GLOBAL_ILLUMINATION (float3)(0.2, 0.2, 0.2)
+#define GLOBAL_ILLUMINATION_M (float3)(0.2, 0.2, 0.2)
 
-#define NUM_RAYS 1
-#define LIGHT_SAMPLES 4
+//#define NUM_RAYS 1
+#define LIGHT_SAMPLES_M 1
 
-#define EPS_F (0.00001f)
+//#define EPS_F (0.00001f)
 #define EPS_GRAD (0.001f)
 
 //#define K_SMOOTH (0.0005f)
 #define K_SMOOTH (0.02f)
 
-#define randf(seed) ((float)(seed = (((long)(seed) * 16807) % 2147483647)) / 2147483647)
+//#define randf(seed) ((float)(seed = (((long)(seed) * 16807) % 2147483647)) / 2147483647)
 
 #define SMOOTHING true
 
@@ -56,31 +56,17 @@ typedef struct {
     float3 d; //should be normalized
     float mint;
     float maxt;
-} Ray;
+} RayM;
 
 typedef struct {
     float t; 
     float3 n;
     bool hit;
     float3 rad;
-} Intersection;
+} IntersectionM;
 
-//bbox_1[0] = min_x, bbox_1[1] = min_y, bbox_1[2] = min_z
-//bbox_2[0] = max_x, bbox_2[1] = max_y, bbox_2[2] = max_z
-bool intersect_bbox(Ray r, float3 min_vals, float3 max_vals)
+bool intersect_bbox_M(RayM r, float3 min_vals, float3 max_vals)
 {
-    // float3 t_min_per_dim = (float3)(INFINITY, INFINITY, INFINITY);
-    // float3 t_max_per_dim = (float3)(-INFINITY, -INFINITY, -INFINITY);;
-    // for (int i = 0; i < 3; i++)
-    // {
-    //     t_min_per_dim[i] = min(t_min_per_dim[i], (ray.d[i] == 0) ? INFINITY : (min_vals[i] - ray.o[i]) / ray.d[i]);
-    //     t_max_per_dim[i] = max(t_max_per_dim[i], (ray.d[i] == 0) ? -INFINITY : (max_vals[i] - ray.o[i]) / ray.d[i]);
-    // }
-    // float t_min = max(t_min_per_dim.x, min(t_min_per_dim.y, t_min_per_dim.z));
-    // float t_max = min(t_max_per_dim.x, min(t_max_per_dim.y, t_max_per_dim.z));
-    
-    // return t_min != INFINITY && t_max != -INFINITY;
-
     float t0 = r.mint;
     float t1 = r.maxt;
     for (int i = 0; i < 3; i++)
@@ -140,7 +126,7 @@ kernel void raymarch
         float3 vec = (float3)((x - 0.5) * hFov_expr, (y - 0.5) * vFov_expr, -1);
         float3 res = vec.x * c2w_0 + vec.y * c2w_1 + vec.z * c2w_2;
 
-        Ray r;
+        RayM r;
         r.o = camPos;
         r.d = normalize(res);
         r.mint = NCLIP;
@@ -149,7 +135,7 @@ kernel void raymarch
         localFlags[lid] = 0;
         for (int k = 0; k < SPHERE_COUNT / WORK_GROUP_SIZE; k++)
         {
-            if (intersect_bbox(r, (float3)(bboxes[6 * k], bboxes[6 * k + 1], bboxes[6 * k + 2]), (float3)(bboxes[6 * k + 3], bboxes[6 * k + 4], bboxes[6 * k + 5])))
+            if (intersect_bbox_M(r, (float3)(bboxes[6 * k], bboxes[6 * k + 1], bboxes[6 * k + 2]), (float3)(bboxes[6 * k + 3], bboxes[6 * k + 4], bboxes[6 * k + 5])))
                 localFlags[lid] |= (1 << k);
         }
         // if (lid == 0)
@@ -161,7 +147,7 @@ kernel void raymarch
         for (int k = 0; k < WORK_GROUP_SIZE; k++)
             flags |= localFlags[k];
 
-        Intersection isect;
+        IntersectionM isect;
         isect.t = r.mint;
         isect.hit = false;
     
@@ -279,7 +265,7 @@ kernel void raymarch
         if (isect.hit)
         {
             float3 hit_p = r.o + r.d * isect.t;
-            for (int j = 0; j < LIGHT_SAMPLES; j++)
+            for (int j = 0; j < LIGHT_SAMPLES_M; j++)
             {
                 float2 sample = (float2)(randf(seed) - 0.5, randf(seed) - 0.5);
                 float3 d = AREA_LIGHT_POS + sample.x * AREA_LIGHT_DIMX + sample.y * AREA_LIGHT_DIMY - hit_p;
@@ -294,13 +280,13 @@ kernel void raymarch
                 float pdf = sqDist / (AREA_LIGHT_AREA * -cosTheta);
                 float3 rad = AREA_LIGHT_RADIANCE;
 
-                Ray ray;
+                RayM ray;
                 ray.o = hit_p;
                 ray.d = wi;
                 ray.mint = EPS_F;
                 ray.maxt = dist - EPS_F;
                 
-                // Intersection temp = intersect(ray, spheres);
+                // IntersectionM temp = intersect(ray, spheres);
                 // if (temp.hit)
                 //     continue;
                 if (dot(wi, isect.n) < 0)
@@ -308,7 +294,7 @@ kernel void raymarch
                 //radiance += isect.rad * rad * dot(wi, isect.n) / pdf / LIGHT_SAMPLES;
                 radiance += DIFFUSE_BSDF * rad * dot(wi, isect.n) / pdf / LIGHT_SAMPLES;
             }
-            radiance += GLOBAL_ILLUMINATION;
+            radiance += GLOBAL_ILLUMINATION_M;
         }
     }
     radiance /= NUM_RAYS;

@@ -41,11 +41,11 @@ using namespace cl;
 #define EPS_F (0.00001f)
 #define MIN_R (0.1f)
 #define MAX_R (5.0f)
-#define LOCAL_WORK_SIZE 256
-#define LOCAL_WORK_SIZE_X 16
-#define LOCAL_WORK_SIZE_Y 16
-#define SPHERE_RADIUS (0.02f)
-#define SPHERE_COUNT 256
+#define LOCAL_WORK_SIZE 64
+#define LOCAL_WORK_SIZE_X 8
+#define LOCAL_WORK_SIZE_Y 8
+#define SPHERE_RADIUS (0.015f)
+#define SPHERE_COUNT 512
 
 //#define PROFILE
 
@@ -94,11 +94,12 @@ static const float CJULIA[] = {
 
 static map<string, pair<std::vector<float>, std::vector<float>>> pointClouds;
 
-static int wind_width = 1280;//640;
-static int wind_height= 960;//480;
+static int wind_width = 800;//640;
+static int wind_height= 600;//480;
 static int const nparticles = SPHERE_COUNT;
 static int selectedIndex = -1;
 static bool paused = false;
+static bool march = false;
 
 static std::vector<int> permutation(nparticles);
 static std::vector<uint> codes(nparticles);
@@ -341,6 +342,8 @@ static void glfw_key_callback(GLFWwindow* wind, int key, int scancode, int actio
             selectedIndex = 15;    
         else if (key == GLFW_KEY_P)
             paused = !paused;  
+        else if (key == GLFW_KEY_SPACE)
+            march = !march;
         
         if (selectedIndex != curIndex)
             loadPointCloud(selectedIndex);   
@@ -503,23 +506,20 @@ int main()
         // Set up program and kernels
         ifstream kernelFile1(ASSETS_DIR"/raytrace.cl");
         string kernelSource1((istreambuf_iterator<char>(kernelFile1)), istreambuf_iterator<char>());
-        //ifstream kernelFile2(ASSETS_DIR"/raymarch.cl");
-        //string kernelSource2((istreambuf_iterator<char>(kernelFile2)), istreambuf_iterator<char>());
-        ifstream kernelFile3(ASSETS_DIR"/calculate.cl");
+        ifstream kernelFile2(ASSETS_DIR"/calculate.cl");
+        string kernelSource2((istreambuf_iterator<char>(kernelFile2)), istreambuf_iterator<char>());
+        ifstream kernelFile3(ASSETS_DIR"/integrate.cl");    
         string kernelSource3((istreambuf_iterator<char>(kernelFile3)), istreambuf_iterator<char>());
-        ifstream kernelFile4(ASSETS_DIR"/integrate.cl");    
-        string kernelSource4((istreambuf_iterator<char>(kernelFile4)), istreambuf_iterator<char>());
 
         Program::Sources sources;
         sources.push_back({ kernelSource1.c_str(), kernelSource1.length() });
-        //sources.push_back({ kernelSource2.c_str(), kernelSource2.length() });
+        sources.push_back({ kernelSource2.c_str(), kernelSource2.length() });
         sources.push_back({ kernelSource3.c_str(), kernelSource3.length() });
-        sources.push_back({ kernelSource4.c_str(), kernelSource4.length() });
         params.p = Program(context, sources);
 
         params.p.build(std::vector<Device>(1, params.d));
         params.raytrace = Kernel(params.p, "raytrace");
-        //params.raymarch = Kernel(params.p, "raymarch");
+        params.raymarch = Kernel(params.p, "raymarch");
         params.kc = Kernel(params.p, "calculate");
         params.ki = Kernel(params.p, "integrate");
 
@@ -813,20 +813,40 @@ void processTimeStep(float deltaTime)
                         local[1] * divup(wind_height, local[1]));
         // set kernel arguments
         int temp = -1;
-        params.raytrace.setArg(0, params.tex);
-        params.raytrace.setArg(1, wind_width);
-        params.raytrace.setArg(2, wind_height);
-        params.raytrace.setArg(3, hFov_expr);
-        params.raytrace.setArg(4, vFov_expr);
-        params.raytrace.setArg(5, params.cameraPos);
-        params.raytrace.setArg(6, temp);
-        params.raytrace.setArg(7, params.c2w);
-        params.raytrace.setArg(8, params.spheres);
-        params.raytrace.setArg(9, params.permutation);
-        params.raytrace.setArg(10, params.bboxes);
-        params.raytrace.setArg(11, params.colors);
-        params.raytrace.setArg(12, params.seed);
-        params.q.enqueueNDRangeKernel(params.raytrace, cl::NullRange, global, local);
+        if (!march)
+        {
+            params.raytrace.setArg(0, params.tex);
+            params.raytrace.setArg(1, wind_width);
+            params.raytrace.setArg(2, wind_height);
+            params.raytrace.setArg(3, hFov_expr);
+            params.raytrace.setArg(4, vFov_expr);
+            params.raytrace.setArg(5, params.cameraPos);
+            params.raytrace.setArg(6, temp);
+            params.raytrace.setArg(7, params.c2w);
+            params.raytrace.setArg(8, params.spheres);
+            params.raytrace.setArg(9, params.permutation);
+            params.raytrace.setArg(10, params.bboxes);
+            params.raytrace.setArg(11, params.colors);
+            params.raytrace.setArg(12, params.seed);
+            params.q.enqueueNDRangeKernel(params.raytrace, cl::NullRange, global, local);
+        }
+        else
+        {
+            params.raymarch.setArg(0, params.tex);
+            params.raymarch.setArg(1, wind_width);
+            params.raymarch.setArg(2, wind_height);
+            params.raymarch.setArg(3, hFov_expr);
+            params.raymarch.setArg(4, vFov_expr);
+            params.raymarch.setArg(5, params.cameraPos);
+            params.raymarch.setArg(6, temp);
+            params.raymarch.setArg(7, params.c2w);
+            params.raymarch.setArg(8, params.spheres);
+            params.raymarch.setArg(9, params.permutation);
+            params.raymarch.setArg(10, params.bboxes);
+            params.raymarch.setArg(11, params.colors);
+            params.raymarch.setArg(12, params.seed);
+            params.q.enqueueNDRangeKernel(params.raymarch, cl::NullRange, global, local);
+        }
 
         // release opengl object
         res = params.q.enqueueReleaseGLObjects(&objs);
