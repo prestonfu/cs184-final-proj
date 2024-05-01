@@ -16,7 +16,7 @@
 #define AREA_LIGHT_AREA 4 //make sure this matches dimx * dimy
 #define AREA_LIGHT_RADIANCE (float3)(1, 1, 1)
 
-#define GLOBAL_ILLUMINATION (float3)(0.2, 0.2, 0.2)
+#define GLOBAL_ILLUMINATION (float3)(0.1, 0.1, 0.1)
 
 #define NUM_RAYS 1
 #define LIGHT_SAMPLES 4
@@ -86,7 +86,7 @@ kernel void raytrace
     global const float* spheres,
     global const int* permutation, //for sphere positions
     global const float* bboxes,
-    global const float* targetColor,
+    global const float* colors,
     global int* seedMemory
 )
 {
@@ -148,7 +148,7 @@ kernel void raytrace
                continue;
             int index = permutation[k * WORK_GROUP_SIZE + lid];
             localBuffer[lid] = (float3)(spheres[3 * index], spheres[3 * index + 1], spheres[3 * index + 2]);
-            localColor[lid] = (float3)(targetColor[3 * index], targetColor[3 * index + 1], targetColor[3 * index + 2]);
+            localColor[lid] = (float3)(colors[3 * index], colors[3 * index + 1], colors[3 * index + 2]);
 
             barrier(CLK_LOCAL_MEM_FENCE);
 
@@ -221,7 +221,9 @@ kernel void raytrace
                 // if (temp.hit)
                 //     continue;
                 if (dot(wi, isect.n) < 0)
+                {
                     continue;
+                }
                 radiance += isect.rad * rad * dot(wi, isect.n) / pdf / LIGHT_SAMPLES;
                 //radiance += DIFFUSE_BSDF * rad * dot(wi, isect.n) / pdf / LIGHT_SAMPLES;
             }

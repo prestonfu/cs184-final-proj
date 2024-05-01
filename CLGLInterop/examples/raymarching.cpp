@@ -118,6 +118,7 @@ typedef struct {
     Buffer permutation;
     Buffer bboxes;
     Buffer seed;
+    Buffer colors;
 
     Buffer targetPos;
     Buffer targetColor;
@@ -127,6 +128,7 @@ typedef struct {
     Buffer i; // position buffer
     Buffer v; // velocity buffer
     Buffer a; // acceleration buffer
+    //Buffer 
 } process_params;
 
 typedef struct {
@@ -156,25 +158,7 @@ render_params rparams;
 camera_state cam;
 mouse_state mouse;
 
-static string pointCloudNames[] = 
-{
-    "the_little_mermaid_combing_her_hair_with_a_fork",
-    "olaf_the_snowman_swimming_in_a_hot_chocolate_pool",
-    "guitar",
-    "moai_statue",
-    "a_watermelon_wearing_scuba_gear",
-    "sonic_the_hedgehog_running_laps_around_the_millenium_falcon",
-    "a_banana_split_riding_a_tandem_bicycle",
-    "piglet_getting_tangled_up_in_strings_from_winnie_the_pooh",
-    "slinky_dog_from_toy_story_playing_a_slingshot_game",
-    "blue_whale",
-    "a_mailbox_delivering_letters_to_a_beehive",
-    "a_potato_chip_forming_a_rock_band",
-    "shrek",
-    "a_pair_of_scissors_cutting_a_paper_airplane's_hair",
-    "godzilla_battling_a_giant_soup_can",
-    "totoro"
-};
+static std::vector<string> pointCloudNames;
 
 void loadPointCloud(int index)
 {
@@ -464,6 +448,10 @@ int main()
 
     // Load point clouds
     pointClouds = read_files("/../assets/point-cloud-300M");
+    for (auto &p : pointClouds)
+    {
+        pointCloudNames.push_back(p.first);
+    }
 
     cl_int errCode;
     try {
@@ -629,11 +617,13 @@ int main()
         params.a = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 3 * nparticles);
         params.targetPos = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 3 * nparticles);
         params.targetColor = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 3 * nparticles);
+        params.colors = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 3 * nparticles);
         params.q.enqueueWriteBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
         params.q.enqueueWriteBuffer(params.v, CL_TRUE, 0, sizeof(float) * 3 * nparticles, vel.data());
         params.q.enqueueWriteBuffer(params.a, CL_TRUE, 0, sizeof(float) * 3 * nparticles, accel.data());
         params.q.enqueueWriteBuffer(params.targetPos, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
         params.q.enqueueWriteBuffer(params.targetColor, CL_TRUE, 0, sizeof(float) * 3 * nparticles, color.data());
+        params.q.enqueueWriteBuffer(params.colors, CL_TRUE, 0, sizeof(float) * 3 * nparticles, color.data());
     } catch(Error error) {
         std::cout << error.what() << "(" << error.err() << ")" << std::endl;
         std::string val = params.p.getBuildInfo<CL_PROGRAM_BUILD_LOG>(params.d);
@@ -735,7 +725,9 @@ void processTimeStep(float deltaTime)
         params.ki.setArg(0, params.spheres);
         params.ki.setArg(1, params.v);
         params.ki.setArg(2, params.a);
-        params.ki.setArg(3, deltaTime);
+        params.ki.setArg(3, params.colors);
+        params.ki.setArg(4, params.targetColor);
+        params.ki.setArg(5, deltaTime);
         
         auto particle_start = std::chrono::high_resolution_clock::now();
         params.q.enqueueNDRangeKernel(params.ki, cl::NullRange, global, local);
@@ -831,7 +823,7 @@ void processTimeStep(float deltaTime)
         params.raytrace.setArg(8, params.spheres);
         params.raytrace.setArg(9, params.permutation);
         params.raytrace.setArg(10, params.bboxes);
-        params.raytrace.setArg(11, params.targetColor);
+        params.raytrace.setArg(11, params.colors);
         params.raytrace.setArg(12, params.seed);
         params.q.enqueueNDRangeKernel(params.raytrace, cl::NullRange, global, local);
 

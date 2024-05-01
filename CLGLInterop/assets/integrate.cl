@@ -6,6 +6,8 @@ kernel void integrate
     global float* positions, 
     global float* velocities, 
     global const float* accelerations, 
+    global float* colors,
+    global const float* targetColors,
     const float deltaTime
 )
 {
@@ -30,6 +32,10 @@ kernel void integrate
     velocities[3 * id] = vel.x;
     velocities[3 * id + 1] = vel.y;
     velocities[3 * id + 2] = vel.z;
+
+    for (int j = 0; j < 3; j++)
+        colors[3 * id + j] = (1 - deltaTime) * colors[3 * id + j] + deltaTime * targetColors[3 * id + j];
+    
     //accelerations[3 * id] = accel.x;
     //accelerations[3 * id + 1] = accel.y;
     //accelerations[3 * id + 2] = accel.z;

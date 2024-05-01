@@ -45,6 +45,9 @@ kernel void calculate
     {
         if (i == id)
             continue;
+            
+        
+            
         float3 otherPos = (float3)(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
         float distance = length(pos - otherPos);
         if (dot(pos - otherPos, normalize(vel)) < -0.5 * distance)
