@@ -44,7 +44,7 @@ using namespace cl;
 #define LOCAL_WORK_SIZE 256
 #define LOCAL_WORK_SIZE_X 16
 #define LOCAL_WORK_SIZE_Y 16
-#define SPHERE_RADIUS (0.005f)
+#define SPHERE_RADIUS (0.0075f)
 #define SPHERE_COUNT 4096
 
 //#define PROFILE
@@ -164,6 +164,8 @@ void loadPointCloud(int index)
 {
     if (index == -1)
     {
+        std::vector<float> data(3 * nparticles, 1);
+        params.q.enqueueWriteBuffer(params.targetColor, CL_TRUE, 0, sizeof(float) * 3 * nparticles, data.data());
         cout << "model unloaded" << endl;
         return;
     }
@@ -186,6 +188,7 @@ void loadPointCloud(int index)
     // }
     //params.q.enqueueWriteBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, pointClouds[name].data());
 }
+
 
 void setScreenSize(int width, int height)
 {
@@ -655,7 +658,7 @@ int main()
         {
             std::string FPS = std::to_string((1.0 / time_diff) * counter);
             std::string ms = std::to_string((time_diff / counter) * 1000);
-            std::string newTitle = "Ray Marching - " + FPS + "FPS / " + ms + "ms";
+            std::string newTitle = "Ray Marching - " + FPS + "FPS / " + ms + "ms - " + (selectedIndex == -1 ? "flocking" : pointCloudNames[selectedIndex]);
             glfwSetWindowTitle(window, newTitle.c_str());
             prev_time = curr_time;
             counter = 0;

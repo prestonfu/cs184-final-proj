@@ -1,4 +1,4 @@
-#define SPHERE_RADIUS 0.005
+#define SPHERE_RADIUS 0.0075
 #define SPHERE_COUNT 4096
 #define MIN_THRESHOLD (0.001f)
 #define MAX_THRESHOLD 10
@@ -9,14 +9,14 @@
 #define FCLIP 4
 
 #define DIFFUSE_BSDF (float3)(1, 1, 1) //includes color
-#define AREA_LIGHT_POS (float3)(0, 2, 0)
+#define AREA_LIGHT_POS (float3)(0, 1, 0)
 #define AREA_LIGHT_DIR (float3)(0, -1, 0)
-#define AREA_LIGHT_DIMX (float3)(2, 0, 0)
-#define AREA_LIGHT_DIMY (float3)(0, 0, 2)
-#define AREA_LIGHT_AREA 4 //make sure this matches dimx * dimy
+#define AREA_LIGHT_DIMX (float3)(0.5, 0, 0)
+#define AREA_LIGHT_DIMY (float3)(0, 0, 0.5)
+#define AREA_LIGHT_AREA 1 //make sure this matches dimx * dimy
 #define AREA_LIGHT_RADIANCE (float3)(1, 1, 1)
 
-#define GLOBAL_ILLUMINATION (float3)(0.1, 0.1, 0.1)
+#define GLOBAL_ILLUMINATION (float3)(0.05, 0.05, 0.05)
 
 #define NUM_RAYS 1
 #define LIGHT_SAMPLES 4
@@ -191,6 +191,16 @@ kernel void raytrace
             }
 
             barrier(CLK_LOCAL_MEM_FENCE);
+        }
+        float t = (AREA_LIGHT_POS.y - r.o.y) / r.d.y;
+        float3 p = r.o + r.d * t;
+        if (t > 0 && fabs(p.x) < AREA_LIGHT_DIMX.x && fabs(p.z) < AREA_LIGHT_DIMY.z)
+        {
+            if (!isect.hit || t < isect.t)
+            {
+                isect.hit = false;
+                radiance += r.o.y < AREA_LIGHT_POS.y ? AREA_LIGHT_RADIANCE : (float3)(0.17, 0.17, 0.17);
+            }
         }
 
         if (isect.hit)

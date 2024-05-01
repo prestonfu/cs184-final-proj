@@ -59,7 +59,9 @@ std::map<std::string, std::pair<std::vector<float>, std::vector<float>>> read_fi
             colors[3 * i + 2] = arr[i + 5 * NUM_POINTS];
         }
         std::string name = file;
-        name = name.substr(name.find_last_of('/') + 1);
+        //name = name.substr(name.find_last_of('/') + 1);
+        //name = name.substr(0, name.length() - 4);
+        name = name.substr(name.find_first_of('_') + 1);
         name = name.substr(0, name.length() - 4);
         res[name] = {positions, colors};
         std::cout << name << " loaded" << std::endl;
