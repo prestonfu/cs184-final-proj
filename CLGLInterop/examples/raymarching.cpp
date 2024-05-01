@@ -47,7 +47,8 @@ using namespace cl;
 #define SPHERE_RADIUS (0.005f)
 #define SPHERE_COUNT 4096
 
-//#define PROFILE
+//#define PROFILE INFINITY
+#define PROFILE 500
 
 typedef unsigned int uint;
 
@@ -164,18 +165,18 @@ void loadPointCloud(int index)
 {
     if (index == -1)
     {
-        cout << "model unloaded" << endl;
+        cout << "model unloaded \n";
         return;
     }
     string name = pointCloudNames[index];
     if (pointClouds.count(name) == 0)
     {
-        cout << name << " not found" << endl;
+        cout << name << " not found \n";
         return;
     }
     params.q.enqueueWriteBuffer(params.targetPos, CL_TRUE, 0, sizeof(float) * 3 * nparticles, pointClouds[name].first.data());
     params.q.enqueueWriteBuffer(params.targetColor, CL_TRUE, 0, sizeof(float) * 3 * nparticles, pointClouds[name].second.data());
-    cout << name << " loaded" << endl;
+    cout << name << " loaded \n";
     // std::vector<float> cloud = pointClouds[name];
     // for (int i = cloud.size() / 3 - 1; i > 0; i--)
     // {
@@ -353,7 +354,7 @@ static void glfw_framebuffer_size_callback(GLFWwindow* wind, int width, int heig
     //wind_height = height;
 }
 
-void processTimeStep(float);
+void processTimeStep(float, int);
 void renderFrame(void);
 
 inline float radians(float angle)
@@ -643,14 +644,21 @@ int main()
     double curr_time = 0.0;
     double time_diff;
     unsigned int counter = 0;
+    unsigned int cnt = 0;
 
     float previousTime = glfwGetTime();
+
+    double total_process_timestep_durations = 0.0;
+    double total_render_durations = 0.0;
+    double total_swap_buffer_durations = 0.0;
+    double total_poll_durations = 0.0;
 
     while (!glfwWindowShouldClose(window)) {
 
         curr_time = glfwGetTime();
         time_diff = curr_time - prev_time;
         counter ++;
+        cnt++;
         if (time_diff >= 1.0 / 30.0) 
         {
             std::string FPS = std::to_string((1.0 / time_diff) * counter);
@@ -660,37 +668,70 @@ int main()
             prev_time = curr_time;
             counter = 0;
         }
+
         float currentTime = glfwGetTime();
+
         // process call
 
-        processTimeStep(paused ? 0 : currentTime - previousTime);
+        auto start_process_timestep_time = std::chrono::high_resolution_clock::now();
+        processTimeStep(paused ? 0 : currentTime - previousTime, cnt);
+
+        if (PROFILE != INFINITY) {
+            auto end_process_timestep_time = std::chrono::high_resolution_clock::now();
+            auto process_timestep_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_process_timestep_time - start_process_timestep_time).count();
+            total_process_timestep_durations += process_timestep_duration;
+            if (cnt % (int) PROFILE == 0) {
+                std::cout << "Process timestep time: " << total_process_timestep_durations / PROFILE << "μs \n";
+                total_process_timestep_durations = 0.0;
+                cnt = 0;
+            }
+        }
+
         // render call
 
         auto start_render_time = std::chrono::high_resolution_clock::now();
         renderFrame();
-#ifdef PROFILE
-        auto end_render_time = std::chrono::high_resolution_clock::now();
-        auto render_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_render_time - start_render_time).count();
-        std::cout << "Render time: " << render_duration << "μs" << std::endl;
-#endif
+
+        if (PROFILE != INFINITY) {
+            auto end_render_time = std::chrono::high_resolution_clock::now();
+            auto render_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_render_time - start_render_time).count();
+            total_render_durations += render_duration;
+            if (cnt % (int) PROFILE == 0) {
+                std::cout << "Render time: " << total_render_durations / PROFILE << "μs \n";
+                total_render_durations = 0.0;
+                cnt = 0;
+            }
+        }
 
         // swap front and back buffers
         auto start_swap_buffer_time = std::chrono::high_resolution_clock::now();
         glfwSwapBuffers(window);
-#ifdef PROFILE
-        auto end_swap_buffer_time = std::chrono::high_resolution_clock::now();
-        auto swap_buffer_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_swap_buffer_time - start_swap_buffer_time).count();
-        std::cout << "Swap buffer time: " << swap_buffer_duration << "μs" << std::endl;
-#endif
+        
+        if (PROFILE != INFINITY && cnt % (int) PROFILE == 0) {
+            auto end_swap_buffer_time = std::chrono::high_resolution_clock::now();
+            auto swap_buffer_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_swap_buffer_time - start_swap_buffer_time).count();        
+            total_swap_buffer_durations += swap_buffer_duration;
+            if (cnt % (int) PROFILE == 0) {
+                std::cout << "Swap buffer time: " << total_swap_buffer_durations / PROFILE << "μs\n";
+                total_swap_buffer_durations = 0.0;
+                cnt = 0;
+            }
+        }
         
         // poll for events
         auto start_poll_time = std::chrono::high_resolution_clock::now();
         glfwPollEvents();
-#ifdef PROFILE
-        auto end_poll_time = std::chrono::high_resolution_clock::now();
-        auto poll_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_poll_time - start_poll_time).count();
-        std::cout << "Poll time: " << poll_duration << "μs" << std::endl;
-#endif
+
+        if (PROFILE != INFINITY) {            
+            auto end_poll_time = std::chrono::high_resolution_clock::now();
+            auto poll_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_poll_time - start_poll_time).count();
+            total_poll_durations += poll_duration;
+            if (cnt % (int) PROFILE == 0) {
+                std::cout << "Poll time: " << total_poll_durations / PROFILE << "μs\n";
+                total_poll_durations = 0.0;
+                cnt = 0;
+            }
+        }
 
         previousTime = currentTime;
     }
@@ -706,7 +747,7 @@ inline unsigned divup(unsigned a, unsigned b)
     return (a+b-1)/b;
 }
 
-void processTimeStep(float deltaTime)
+void processTimeStep(float deltaTime, int cnt)
 {
     cl::Event ev;
     try {
@@ -734,11 +775,12 @@ void processTimeStep(float deltaTime)
         params.q.finish();
 
         glFinish();
-#ifdef PROFILE
-        auto particle_end = std::chrono::high_resolution_clock::now();
-        auto particle_duration = std::chrono::duration_cast<std::chrono::microseconds>(particle_end - particle_start).count();
-        std::cout << "Particle sim time: " << particle_duration << "μs" << std::endl;
-#endif
+        
+        // if (PROFILE != INFINITY) { // && counter % (int) PROFILE == 0) {
+        //     auto particle_end = std::chrono::high_resolution_clock::now();
+        //     auto particle_duration = std::chrono::duration_cast<std::chrono::microseconds>(particle_end - particle_start).count();
+        //     std::cout << "Particle sim time: " << particle_duration << "μs" << std::endl;
+        // }
 
         std::vector<Memory> objs;
         objs.clear();
@@ -747,22 +789,23 @@ void processTimeStep(float deltaTime)
         cl_int res = params.q.enqueueAcquireGLObjects(&objs,NULL,&ev);
         ev.wait();
         if (res!=CL_SUCCESS) {
-            std::cout<<"Failed acquiring GL object: "<<res<<std::endl;
+            std::cout<<"Failed acquiring GL object: "<<res<< "\n";
             exit(248);
         }
         float hFov_expr = 2 * tan(0.5 * cam.hFov * M_PI / 180);
         float vFov_expr = 2 * tan(0.5 * cam.vFov * M_PI / 180);
 
-        auto bvh_start = std::chrono::high_resolution_clock::now();
+        // auto bvh_start = std::chrono::high_resolution_clock::now();
         params.q.enqueueReadBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
         params.q.finish();
 
         bvh(spheres, permutation, 0, nparticles, rand() % 3);
-#ifdef PROFILE
-        auto bvh_end = std::chrono::high_resolution_clock::now();
-        auto bvh_duration = std::chrono::duration_cast<std::chrono::microseconds>(bvh_end - bvh_start).count();
-        std::cout << "BVH construction time: " << bvh_duration << "μs" << std::endl;
-#endif
+
+        // if (PROFILE != INFINITY) { // && counter % PROFILE == 0) {
+        //     auto bvh_end = std::chrono::high_resolution_clock::now();
+        //     auto bvh_duration = std::chrono::duration_cast<std::chrono::microseconds>(bvh_end - bvh_start).count();
+        //     std::cout << "BVH construction time: " << bvh_duration << "μs" << std::endl;
+        // }
 
         // float minx = spheres[0], miny = spheres[1], minz = spheres[2];
         // float maxx = spheres[0], maxy = spheres[1], maxz = spheres[2];
@@ -844,12 +887,12 @@ void processTimeStep(float deltaTime)
         res = params.q.enqueueReleaseGLObjects(&objs);
         ev.wait();
         if (res!=CL_SUCCESS) {
-            std::cout<<"Failed releasing GL object: "<<res<<std::endl;
+            std::cout<<"Failed releasing GL object: "<<res<< "\n";
             exit(247);
         }
         params.q.finish();
     } catch(Error err) {
-        std::cout << err.what() << "(" << err.err() << ")" << std::endl;
+        std::cout << err.what() << "(" << err.err() << ") \n";
     }
 }
 

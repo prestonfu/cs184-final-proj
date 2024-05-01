@@ -24,8 +24,7 @@
 #define EPS_F (0.00001f)
 #define EPS_GRAD (0.001f)
 
-#define randf(seed) ((float)(seed = (((long)(seed) * 16807) % 2147483647)) / 2147483647)
-
+#define randf(seed) ((float)(seed = abs(seed + 2147483647 / 4)) / 2147483647)
 // constant float3 colors[16] =
 // {
 //     (float3)(0, 0, 1),
