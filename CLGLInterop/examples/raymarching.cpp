@@ -369,18 +369,10 @@ inline float degrees(float radians)
     return radians * 180 / M_PI;
 }
 
-//[l, r)
-void bvh(std::vector<float> &spheres, std::vector<int> &permutation, int l, int r, int sortAxis)
+void bvh(std::vector<float> &spheres, std::vector<int> &permutation, int l, int r)
 {
     if (r - l <= 256)
         return;
-    sort(permutation.begin() + l, permutation.begin() + r, [&](int a, int b) -> bool
-        {
-            return spheres[3 * a + sortAxis] < spheres[3 * b + sortAxis];
-        });
-    int m = (l + r) / 2;
-    //bvh(spheres, permutation, l, m, (sortAxis + 1) % 3);
-    //bvh(spheres, permutation, m, r, (sortAxis + 1) % 3);
 
     float min_x = INFINITY, max_x = -INFINITY, min_y = INFINITY, max_y = -INFINITY, min_z = INFINITY, max_z = -INFINITY;
     for (int i = 0; i < spheres.size(); i += 3) {
@@ -403,10 +395,14 @@ void bvh(std::vector<float> &spheres, std::vector<int> &permutation, int l, int 
         axis_idx = 2;
     }
 
-    // int axis_idx = rand() % 3;
+    sort(permutation.begin() + l, permutation.begin() + r, [&](int a, int b) -> bool
+        {
+            return spheres[3 * a + axis_idx] < spheres[3 * b + axis_idx];
+        });
+    int m = (l + r) / 2;
 
-    bvh(spheres, permutation, l, m, axis_idx);
-    bvh(spheres, permutation, m, r, axis_idx);
+    bvh(spheres, permutation, l, m);
+    bvh(spheres, permutation, m, r);
 }
 
 int main()
@@ -650,15 +646,14 @@ int main()
     float previousTime = glfwGetTime();
 
     while (!glfwWindowShouldClose(window)) {
-
         curr_time = glfwGetTime();
         time_diff = curr_time - prev_time;
         counter ++;
         if (time_diff >= 1.0 / 30.0) 
         {
-            std::string FPS = std::to_string((1.0 / time_diff) * counter);
-            std::string ms = std::to_string((time_diff / counter) * 1000);
-            std::string newTitle = "Ray Marching - " + FPS + "FPS / " + ms + "ms - " + (selectedIndex == -1 ? "flocking" : pointCloudNames[selectedIndex]);
+            std::string FPS = std::to_string((1.0 / time_diff) * counter).substr(0, 4);
+            std::string ms = std::to_string((time_diff / counter) * 1000).substr(0, 4);
+            std::string newTitle = "MARLIN - " + FPS + "FPS / " + ms + "ms - " + (selectedIndex == -1 ? "flocking" : pointCloudNames[selectedIndex]);
             glfwSetWindowTitle(window, newTitle.c_str());
             prev_time = curr_time;
             counter = 0;
@@ -760,7 +755,7 @@ void processTimeStep(float deltaTime)
         params.q.enqueueReadBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
         params.q.finish();
 
-        bvh(spheres, permutation, 0, nparticles, rand() % 3);
+        bvh(spheres, permutation, 0, nparticles);
 #ifdef PROFILE
         auto bvh_end = std::chrono::high_resolution_clock::now();
         auto bvh_duration = std::chrono::duration_cast<std::chrono::microseconds>(bvh_end - bvh_start).count();
