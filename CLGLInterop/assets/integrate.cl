@@ -1,5 +1,5 @@
-#define MAX_VEL 2
-#define MAX_ACCEL 8
+#define MAX_VEL 0.5
+#define MAX_ACCEL 1
 
 kernel void integrate
 (

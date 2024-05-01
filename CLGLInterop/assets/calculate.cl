@@ -1,28 +1,31 @@
 #define SPHERE_COUNT 4096
 #define WORK_GROUP_SIZE 256
 
-#define RADIUS_SEPARATION 0.2
-#define RADIUS_COHESION 0.3
-#define RADIUS_ALIGNMENT 0.2
-#define RADIUS_CONTAINMENT 0.2
+#define RADIUS_SEPARATION 0.1
+#define RADIUS_COHESION 0.15
+#define RADIUS_ALIGNMENT 0.08
+#define RADIUS_CONTAINMENT 1
+#define RADIUS_ARRIVAL 0.05
+#define RADIUS_CENTER 0.5
 
-#define K_SEPARATION 4
-#define K_COHESION 2.5
-#define K_ALIGNMENT 1.5
-#define K_CONTAINMENT 10
+#define K_SEPARATION 7
+#define K_COHESION 7.5
+#define K_ALIGNMENT 4
+#define K_CONTAINMENT 20
+#define K_ARRIVAL 70
+#define K_CENTER 2
 
 #define T_CONTAINMENT 1
 
-#define MAX_VELOCITY 2
+#define MAX_VELOCITY 0.5
 
 kernel void calculate
 (
     global float* positions, 
     global const float* velocities, 
-    global float* accelerations, 
-    //global float* targetPositions,
-    //const int hasTarget,
-    const float deltaTime
+    global float* accelerations,
+    global float* targetPos,
+    const int selectedIndex
 )
 {
     local float3 otherPos[WORK_GROUP_SIZE];
@@ -38,68 +41,68 @@ kernel void calculate
     separation = cohesion = alignment = accel;
     int nCohesion = 0, nAlignment = 0;
 
-    // for (int i = 0; i < SPHERE_COUNT; i++)
-    // {
-    //     if (i == id)
-    //         continue;
-    //     float3 otherPos = (float3)(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
-    //     float distance = length(pos - otherPos);
-    //     if (dot(pos - otherPos, normalize(vel)) < -0.5 * distance)
-    //         continue;
-    //     float3 otherVel = (float3)(velocities[3 * i], velocities[3 * i + 1], velocities[3 * i + 2]);
-    //     if (distance < RADIUS_SEPARATION)
-    //     {
-    //         float3 displacement = pos - otherPos;
-    //         separation += displacement / distance / distance;
-    //     }
-    //     if (distance < RADIUS_COHESION)
-    //     {
-    //         cohesion += otherPos;
-    //         nCohesion++;
-    //     }
-    //     if (distance < RADIUS_ALIGNMENT)
-    //     {
-    //         alignment += otherVel;
-    //         nAlignment++;
-    //     }
-    // }
-    for (int i = 0; i < SPHERE_COUNT; i += WORK_GROUP_SIZE)
+    for (int i = 0; i < SPHERE_COUNT; i++)
     {
-        int index = i + lid;
-        otherPos[lid] = (float3)(positions[3 * index], positions[3 * index + 1], positions[3 * index + 2]);
-        otherVel[lid] = (float3)(velocities[3 * index], velocities[3 * index + 1], velocities[3 * index + 2]);
-
-        barrier(CLK_LOCAL_MEM_FENCE);
-
-        if (i != id)
+        if (i == id)
+            continue;
+        float3 otherPos = (float3)(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
+        float distance = length(pos - otherPos);
+        if (dot(pos - otherPos, normalize(vel)) < -0.5 * distance)
+            continue;
+        float3 otherVel = (float3)(velocities[3 * i], velocities[3 * i + 1], velocities[3 * i + 2]);
+        if (distance < RADIUS_SEPARATION)
         {
-            for (int j = 0; j < WORK_GROUP_SIZE; j++)
-            {
-                float3 otherPos = otherPos[j];//(float3)(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
-                float distance = length(pos - otherPos);
-                if (dot(pos - otherPos, normalize(vel)) < -0.5 * distance)
-                    continue;
-                float3 otherVel = otherVel[j];//(float3)(velocities[3 * i], velocities[3 * i + 1], velocities[3 * i + 2]);
-                if (distance < RADIUS_SEPARATION)
-                {
-                    float3 displacement = pos - otherPos;
-                    separation += displacement / distance / distance;
-                }
-                if (distance < RADIUS_COHESION)
-                {
-                    cohesion += otherPos;
-                    nCohesion++;
-                }
-                if (distance < RADIUS_ALIGNMENT)
-                {
-                    alignment += otherVel;
-                    nAlignment++;
-                }
-            }
+            float3 displacement = pos - otherPos;
+            separation += displacement / distance / distance;
         }
-
-        barrier(CLK_LOCAL_MEM_FENCE);
+        if (distance < RADIUS_COHESION)
+        {
+            cohesion += otherPos;
+            nCohesion++;
+        }
+        if (distance < RADIUS_ALIGNMENT)
+        {
+            alignment += otherVel;
+            nAlignment++;
+        }
     }
+    // for (int i = 0; i < SPHERE_COUNT; i += WORK_GROUP_SIZE)
+    // {
+    //     int index = i + lid;
+    //     otherPos[lid] = (float3)(positions[3 * index], positions[3 * index + 1], positions[3 * index + 2]);
+    //     otherVel[lid] = (float3)(velocities[3 * index], velocities[3 * index + 1], velocities[3 * index + 2]);
+
+    //     barrier(CLK_LOCAL_MEM_FENCE);
+
+    //     if (index != id)
+    //     {
+    //         for (int j = 0; j < WORK_GROUP_SIZE; j++)
+    //         {
+    //             float3 otherPos = otherPos[j];//(float3)(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
+    //             float distance = length(pos - otherPos);
+    //             if (dot(pos - otherPos, normalize(vel)) < -0.5 * distance)
+    //                 continue;
+    //             float3 otherVel = otherVel[j];//(float3)(velocities[3 * i], velocities[3 * i + 1], velocities[3 * i + 2]);
+    //             if (distance < RADIUS_SEPARATION)
+    //             {
+    //                 float3 displacement = pos - otherPos;
+    //                 separation += displacement / distance / distance;
+    //             }
+    //             if (distance < RADIUS_COHESION)
+    //             {
+    //                 cohesion += otherPos;
+    //                 nCohesion++;
+    //             }
+    //             if (distance < RADIUS_ALIGNMENT)
+    //             {
+    //                 alignment += otherVel;
+    //                 nAlignment++;
+    //             }
+    //         }
+    //     }
+
+    //     barrier(CLK_LOCAL_MEM_FENCE);
+    // }
 
     accel += K_SEPARATION * normalize(separation);
     if (nCohesion > 0)
@@ -124,6 +127,16 @@ kernel void calculate
         float3 normal = -normalize(pos + t * vel);
         float3 dir = normalize(vel);
         accel += K_CONTAINMENT * normalize(normal - dot(normal, dir) * dir);
+    }
+
+    if (length(pos) > RADIUS_CENTER)
+        accel += -normalize(pos) * K_CENTER;
+
+    if (selectedIndex != -1)
+    {
+        float3 targetOffset = (float3)(targetPos[3 * id], targetPos[3 * id + 1], targetPos[3 * id + 2]) - pos;
+        float3 desiredVelocity = min(MAX_VELOCITY, length(targetOffset) / RADIUS_ARRIVAL) * normalize(targetOffset);
+        accel += K_ARRIVAL * normalize(desiredVelocity - vel);
     }
 
     accelerations[3 * id] = accel.x;

@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <common/cnpy.h>
 #include "read_npz.h"
+#include <map>
 
 #define PATH_MAXX 4096
 #define NUM_POINTS 4096
@@ -39,43 +40,46 @@ std::vector<std::string> get_files_in_symlink(const std::string& relative_path) 
 }
 
 // filename -> [4096 x] [4096 y] [4096 z] [4096 r] [4096 g] [4096 b]
-std::map<std::string, std::vector<float>> read_files_helper(std::vector<std::string> files) {
-    std::map<std::string, std::vector<float>> res;
+std::map<std::string, std::pair<std::vector<float>, std::vector<float>>> read_files_helper(std::vector<std::string> files) {
+    std::map<std::string,std::pair<std::vector<float>, std::vector<float>>> res;
+
     for (const std::string& file : files) {
+        std::vector<float> positions(3 * NUM_POINTS);
+        std::vector<float> colors(3 * NUM_POINTS);
         cnpy::NpyArray npy_arr = cnpy::npy_load(file);
         assert(npy_arr.shape.size() == 2 && npy_arr.shape[0] == NUM_POINTS && npy_arr.shape[1] == NUM_FEATURES);
         float* arr = npy_arr.data<float>();
-        std::vector<float> vec(3 * NUM_POINTS);
         for (int i = 0; i < NUM_POINTS; i++)
         {
-            vec[3 * i] = arr[i];
-            vec[3 * i + 1] = arr[i + 2 * NUM_POINTS];
-            vec[3 * i + 2] = -arr[i + 1 * NUM_POINTS];
+            positions[3 * i] = arr[i];
+            positions[3 * i + 1] = arr[i + 2 * NUM_POINTS];
+            positions[3 * i + 2] = -arr[i + 1 * NUM_POINTS];
+            colors[3 * i + 0] = arr[i + 3 * NUM_POINTS];
+            colors[3 * i + 1] = arr[i + 4 * NUM_POINTS];
+            colors[3 * i + 2] = arr[i + 5 * NUM_POINTS];
         }
-        //std::vector<float> vec(arr, arr + npy_arr.num_vals);
-
         std::string name = file;
         name = name.substr(name.find_last_of('/') + 1);
         name = name.substr(0, name.length() - 4);
-        res[name] = vec;
-
+        res[name] = {positions, colors};
         std::cout << name << " loaded" << std::endl;
-    }
+    };
+
     return res;
 }
 
-// filename -> [x0 y0 z0 x1 y1 z1 ... x4095 y4095 z4095]
-std::map<std::string, std::vector<float>> read_files(std::string path)
+// filename -> {[x0 y0 z0 x1 y1 z1 ... x4095 y4095 z4095], [r0 g0 b0 r1 b1 g1 ...]}
+std::map<std::string, std::pair<std::vector<float>, std::vector<float>>> read_files(std::string path)
 {
     std::vector<std::string> files = get_files_in_symlink(path);
     return read_files_helper(files);
 }
 
 // int main() {
-//     std::vector<std::string> files = get_files_in_symlink("/../assets/point-cloud-300M");
-//     std::map<std::string, std::vector<float>> point_clouds = read_files(files);
+//     vector<string> files = get_files_in_symlink("/../assets/point-cloud-300M");
+//     map<string, vector<float>> point_clouds = read_files(files);
 //     for (auto it = point_clouds.begin(); it != point_clouds.end(); it++) {
-//         std::cout << it->first << " " << it->second[0] << " " << it->second[1] << std::endl;
+//         cout << it->first << " " << it->second[0] << " " << it->second[1] << endl;
 //     }
 //     return 0;
 // }
