@@ -92,7 +92,7 @@ kernel void raytrace
 {
     local float3 localBuffer[WORK_GROUP_SIZE];
     local float3 localColor[WORK_GROUP_SIZE];
-    local ulong localFlags[SPHERE_COUNT / WORK_GROUP_SIZE];
+    local ulong localFlags[WORK_GROUP_SIZE];
 
     const uint xi = get_global_id(0);
     const uint yi = get_global_id(1);
