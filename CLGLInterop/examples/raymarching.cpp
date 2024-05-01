@@ -823,12 +823,11 @@ void processTimeStep(float deltaTime, int cnt)
         float hFov_expr = 2 * tan(0.5 * cam.hFov * M_PI / 180);
         float vFov_expr = 2 * tan(0.5 * cam.vFov * M_PI / 180);
 
-        auto bvh_start_time = std::chrono::high_resolution_clock::now();
+        auto start_bvh_time = std::chrono::high_resolution_clock::now();
         params.q.enqueueReadBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
         params.q.finish();
 
         bvh(spheres, permutation, 0, nparticles, rand() % 3);
-        auto start_bvh_time = std::chrono::high_resolution_clock::now();
 
         if (PROFILE != INFINITY && cnt % (int) PROFILE == 0) {
             auto end_bvh_time = std::chrono::high_resolution_clock::now();
