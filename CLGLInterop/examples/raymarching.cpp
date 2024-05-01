@@ -106,6 +106,8 @@ static std::vector<uint> codes(nparticles);
 static std::vector<float> spheres(3 * nparticles);
 static std::vector<float> bboxes(6 * nparticles / LOCAL_WORK_SIZE);
 
+double total_bvh_durations = 0.0;
+
 typedef struct {
     Device d;
     CommandQueue q;
@@ -642,8 +644,12 @@ int main()
 
     double prev_time = 0.0;
     double curr_time = 0.0;
+    double prev_time2 = 0.0;
+    double curr_time2 = 0.0;
     double time_diff;
+    double time_diff2;
     unsigned int counter = 0;
+    unsigned int counter2 = 0;
     unsigned int cnt = 0;
 
     float previousTime = glfwGetTime();
@@ -652,12 +658,17 @@ int main()
     double total_render_durations = 0.0;
     double total_swap_buffer_durations = 0.0;
     double total_poll_durations = 0.0;
+    double total_fps = 0.0;
 
     while (!glfwWindowShouldClose(window)) {
+        auto start_fps_time = std::chrono::high_resolution_clock::now();
 
         curr_time = glfwGetTime();
+        curr_time2 = glfwGetTime();
         time_diff = curr_time - prev_time;
+        time_diff2 = curr_time2 - prev_time2;
         counter ++;
+        counter2 ++;
         cnt++;
         if (time_diff >= 1.0 / 30.0) 
         {
@@ -667,6 +678,12 @@ int main()
             glfwSetWindowTitle(window, newTitle.c_str());
             prev_time = curr_time;
             counter = 0;
+        }
+        if (time_diff2 >= 10) {
+            std::string FPS = std::to_string((1.0 / time_diff2) * counter2);
+            std::cout << "FPS: " << FPS << "\n";
+            prev_time2 = curr_time2;
+            counter2 = 0;
         }
 
         float currentTime = glfwGetTime();
@@ -734,6 +751,17 @@ int main()
         }
 
         previousTime = currentTime;
+
+        if (PROFILE != INFINITY) {
+            auto end_fps_time = std::chrono::high_resolution_clock::now();
+            auto fps_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_fps_time - start_fps_time).count();
+            total_fps += 1000000.0 / fps_duration;
+            if (cnt % (int) PROFILE == 0) {
+                std::cout << "FPS: " << total_fps / PROFILE << "\n";
+                total_fps = 0.0;
+                cnt = 0;
+            }
+        }
     }
 
     glfwDestroyWindow(window);
@@ -795,17 +823,23 @@ void processTimeStep(float deltaTime, int cnt)
         float hFov_expr = 2 * tan(0.5 * cam.hFov * M_PI / 180);
         float vFov_expr = 2 * tan(0.5 * cam.vFov * M_PI / 180);
 
-        // auto bvh_start = std::chrono::high_resolution_clock::now();
+        auto bvh_start_time = std::chrono::high_resolution_clock::now();
         params.q.enqueueReadBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
         params.q.finish();
 
         bvh(spheres, permutation, 0, nparticles, rand() % 3);
+        auto start_bvh_time = std::chrono::high_resolution_clock::now();
 
-        // if (PROFILE != INFINITY) { // && counter % PROFILE == 0) {
-        //     auto bvh_end = std::chrono::high_resolution_clock::now();
-        //     auto bvh_duration = std::chrono::duration_cast<std::chrono::microseconds>(bvh_end - bvh_start).count();
-        //     std::cout << "BVH construction time: " << bvh_duration << "μs" << std::endl;
-        // }
+        if (PROFILE != INFINITY && cnt % (int) PROFILE == 0) {
+            auto end_bvh_time = std::chrono::high_resolution_clock::now();
+            auto bvh_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_bvh_time - start_bvh_time).count();        
+            total_bvh_durations += bvh_duration;
+            if (cnt % (int) PROFILE == 0) {
+                std::cout << "BVH construction time: " << total_bvh_durations / PROFILE << "μs\n";
+                total_bvh_durations = 0.0;
+                cnt = 0;
+            }
+        }
 
         // float minx = spheres[0], miny = spheres[1], minz = spheres[2];
         // float maxx = spheres[0], maxy = spheres[1], maxz = spheres[2];
