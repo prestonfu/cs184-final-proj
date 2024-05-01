@@ -44,8 +44,8 @@ using namespace cl;
 #define LOCAL_WORK_SIZE 256
 #define LOCAL_WORK_SIZE_X 16
 #define LOCAL_WORK_SIZE_Y 16
-#define SPHERE_RADIUS (0.005f)
-#define SPHERE_COUNT 4096
+#define SPHERE_RADIUS (0.02f)
+#define SPHERE_COUNT 256
 
 //#define PROFILE
 
@@ -164,6 +164,8 @@ void loadPointCloud(int index)
 {
     if (index == -1)
     {
+        std::vector<float> data(3 * nparticles, 1);
+        params.q.enqueueWriteBuffer(params.targetColor, CL_TRUE, 0, sizeof(float) * 3 * nparticles, data.data());
         cout << "model unloaded" << endl;
         return;
     }
@@ -367,17 +369,10 @@ inline float degrees(float radians)
 }
 
 //[l, r)
-void bvh(std::vector<float> &spheres, std::vector<int> &permutation, int l, int r, int sortAxis)
+void bvh(std::vector<float> &spheres, std::vector<int> &permutation, int l, int r)
 {
     if (r - l <= 256)
         return;
-    sort(permutation.begin() + l, permutation.begin() + r, [&](int a, int b) -> bool
-        {
-            return spheres[3 * a + sortAxis] < spheres[3 * b + sortAxis];
-        });
-    int m = (l + r) / 2;
-    //bvh(spheres, permutation, l, m, (sortAxis + 1) % 3);
-    //bvh(spheres, permutation, m, r, (sortAxis + 1) % 3);
 
     float min_x = INFINITY, max_x = -INFINITY, min_y = INFINITY, max_y = -INFINITY, min_z = INFINITY, max_z = -INFINITY;
     for (int i = 0; i < spheres.size(); i += 3) {
@@ -400,10 +395,18 @@ void bvh(std::vector<float> &spheres, std::vector<int> &permutation, int l, int 
         axis_idx = 2;
     }
 
+    sort(permutation.begin() + l, permutation.begin() + r, [&](int a, int b) -> bool
+        {
+            return spheres[3 * a + axis_idx] < spheres[3 * b + axis_idx];
+        });
+    int m = (l + r) / 2;
+    //bvh(spheres, permutation, l, m, (sortAxis + 1) % 3);
+    //bvh(spheres, permutation, m, r, (sortAxis + 1) % 3);
+
     // int axis_idx = rand() % 3;
 
-    bvh(spheres, permutation, l, m, axis_idx);
-    bvh(spheres, permutation, m, r, axis_idx);
+    bvh(spheres, permutation, l, m);
+    bvh(spheres, permutation, m, r);
 }
 
 int main()
@@ -601,8 +604,6 @@ int main()
             spheres[3 * i] /= norm * 2;
             spheres[3 * i + 1] /= norm * 2;
             spheres[3 * i + 2] /= norm * 2;
-            //spheres[3 * i] = spheres[3 * i + 1] = spheres[3 * i + 2] = 0;
-            //cout << spheres[3 * i] << " " << spheres[3 * i + 1] << " " << spheres[3 * i + 2] << endl;
             vel[3 * i] = dist(eng);
             vel[3 * i + 1] = dist(eng);
             vel[3 * i + 2] = dist(eng);
@@ -653,9 +654,9 @@ int main()
         counter ++;
         if (time_diff >= 1.0 / 30.0) 
         {
-            std::string FPS = std::to_string((1.0 / time_diff) * counter);
-            std::string ms = std::to_string((time_diff / counter) * 1000);
-            std::string newTitle = "Ray Marching - " + FPS + "FPS / " + ms + "ms";
+            std::string FPS = std::to_string((1.0 / time_diff) * counter).substr(0, 4);
+            std::string ms = std::to_string((time_diff / counter) * 1000).substr(0, 4);
+            std::string newTitle = "Ray Marching - " + FPS + "FPS / " + ms + "ms - " + (selectedIndex == -1 ? "flocking" : pointCloudNames[selectedIndex]);
             glfwSetWindowTitle(window, newTitle.c_str());
             prev_time = curr_time;
             counter = 0;
@@ -757,7 +758,7 @@ void processTimeStep(float deltaTime)
         params.q.enqueueReadBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
         params.q.finish();
 
-        bvh(spheres, permutation, 0, nparticles, rand() % 3);
+        bvh(spheres, permutation, 0, nparticles);
 #ifdef PROFILE
         auto bvh_end = std::chrono::high_resolution_clock::now();
         auto bvh_duration = std::chrono::duration_cast<std::chrono::microseconds>(bvh_end - bvh_start).count();
@@ -827,19 +828,6 @@ void processTimeStep(float deltaTime)
         params.raytrace.setArg(12, params.seed);
         params.q.enqueueNDRangeKernel(params.raytrace, cl::NullRange, global, local);
 
-        // params.raymarch.setArg(0, params.tex);
-        // params.raymarch.setArg(1, wind_width);
-        // params.raymarch.setArg(2, wind_height);
-        // params.raymarch.setArg(3, hFov_expr);
-        // params.raymarch.setArg(4, vFov_expr);
-        // params.raymarch.setArg(5, params.cameraPos);
-        // params.raymarch.setArg(6, params.c2w);
-        // params.raymarch.setArg(7, params.spheres);
-        // params.raymarch.setArg(8, params.permutation);
-        // params.raymarch.setArg(9, params.bboxes);
-        // params.raymarch.setArg(10, params.seed);
-        // params.raymarch.setArg(11, selectedIndex);
-        // params.q.enqueueNDRangeKernel(params.raymarch, cl::NullRange, global, local);
         // release opengl object
         res = params.q.enqueueReleaseGLObjects(&objs);
         ev.wait();
