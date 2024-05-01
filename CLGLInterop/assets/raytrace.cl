@@ -6,10 +6,10 @@
 #define FCLIP 4
 
 #define DIFFUSE_BSDF (float3)(0.6, 0.6, 0.6) //includes color
-#define AREA_LIGHT_POS (float3)(0, 1.5, 0)
+#define AREA_LIGHT_POS (float3)(0, 1, 0)
 #define AREA_LIGHT_DIR (float3)(0, -1, 0)
-#define AREA_LIGHT_DIMX (float3)(0.5, 0, 0)
-#define AREA_LIGHT_DIMY (float3)(0, 0, 0.5)
+#define AREA_LIGHT_DIMX (float3)(0.25, 0, 0)
+#define AREA_LIGHT_DIMY (float3)(0, 0, 0.25)
 #define AREA_LIGHT_AREA 4 //make sure this matches dimx * dimy
 #define AREA_LIGHT_RADIANCE (float3)(1, 1, 1)
 
@@ -19,7 +19,6 @@
 #define NUM_RAYS 1
 #define LIGHT_SAMPLES 16
 #define LIGHT_SAMPLES_M 1
-#define NUM_BOUNCES 0
 
 #define EPS_F (0.00001f)
 
@@ -113,15 +112,13 @@ kernel void raytrace
     bool active = false;
 
     int raysLeft = NUM_RAYS;
-    int bouncesLeft = 0;
     int lightSamplesLeft = 0;
 
-    while(raysLeft > 0 || bouncesLeft > 0 || lightSamplesLeft > 0)
+    while(raysLeft > 0 || lightSamplesLeft > 0)
     {
-        if (bouncesLeft == 0 && lightSamplesLeft == 0)
+        if (lightSamplesLeft == 0)
         {
             raysLeft--;
-            bouncesLeft = NUM_BOUNCES;
             lightSamplesLeft = LIGHT_SAMPLES;
 
             float x = (xi + randf(seed)) / width;
@@ -229,15 +226,18 @@ kernel void raytrace
             barrier(CLK_LOCAL_MEM_FENCE);
         }
 
-        if (!isect.hit)
+        if (r.type == RAY_CAMERA)
         {
             float t = (AREA_LIGHT_POS.y - r.o.y) / r.d.y;
             float3 p = r.o + r.d * t;
-            if (t > 0 && fabs(p.x) < AREA_LIGHT_DIMX.x && fabs(p.z) < AREA_LIGHT_DIMY.y)
+            if (t > 0 && fabs(p.x) < AREA_LIGHT_DIMX.x && fabs(p.z) < AREA_LIGHT_DIMY.z)
             {
-                //isect.hit = true;
-                active = false;
-                radiance += AREA_LIGHT_RADIANCE;
+                if (!isect.hit || t < isect.t)
+                {
+                    isect.hit = false;
+                    active = false;
+                    radiance += r.o.y < AREA_LIGHT_POS.y ? AREA_LIGHT_RADIANCE : (float3)(0.01, 0.01, 0.01);
+                }
             }
         }
 
@@ -260,41 +260,8 @@ kernel void raytrace
             if (active && !isect.hit)
             {
                 radiance += r.rad;
-                //radiance += isect.color * AREA_LIGHT_RADIANCE * dot(r.d, isect.n) / pdf / LIGHT_SAMPLES;
             }
         }
-        // if (isect.hit)
-        // {
-        //     float3 hit_p = r.o + r.d * isect.t;
-
-        //     float2 sample = (float2)(randf(seed) - 0.5, randf(seed) - 0.5);
-        //     float3 d = AREA_LIGHT_POS + sample.x * AREA_LIGHT_DIMX + sample.y * AREA_LIGHT_DIMY - hit_p;
-        //     float cosTheta = dot(d, AREA_LIGHT_DIR);
-        //     float sqDist = dot(d, d);
-        //     float dist = sqrt(sqDist);
-
-        //     // if (cosTheta > 0)
-        //     //     continue;
-
-        //     float3 wi = d / dist;
-        //     float pdf = sqDist / (AREA_LIGHT_AREA * -cosTheta);
-
-        //     r.o = hit_p;
-        //     r.d = wi;
-        //     r.mint = EPS_F;
-        //     r.maxt = dist - EPS_F;
-        //     r.rad = isect.color * AREA_LIGHT_RADIANCE * dot(wi, isect.n) / pdf / LIGHT_SAMPLES;
-                
-        //         // Intersection temp = intersect(ray, spheres);
-        //         // if (temp.hit)
-        //         //     continue;
-        //         // if (dot(wi, isect.n) < 0)
-        //         // {
-        //         //     continue;
-        //         // }
-        //         // radiance += isect.rad * rad * dot(wi, isect.n) / pdf / LIGHT_SAMPLES;
-        //     //radiance += GLOBAL_ILLUMINATION;
-        // }
     }
     radiance /= NUM_RAYS;
     
@@ -407,6 +374,17 @@ kernel void raymarch
                 done = true;
             }
         }
+        float t = (AREA_LIGHT_POS.y - r.o.y) / r.d.y;
+        float3 p = r.o + r.d * t;
+        if (t > 0 && fabs(p.x) < AREA_LIGHT_DIMX.x && fabs(p.z) < AREA_LIGHT_DIMY.z)
+        {
+            if (!isect.hit || t < isect.t)
+            {
+                isect.hit = false;
+                radiance += r.o.y < AREA_LIGHT_POS.y ? AREA_LIGHT_RADIANCE : (float3)(0.17, 0.17, 0.17);
+            }
+        }
+
         // Calculate normal
         float3 hits[6] = {hit_p, hit_p, hit_p, hit_p, hit_p, hit_p};
         hits[0].x += EPS_GRAD;
