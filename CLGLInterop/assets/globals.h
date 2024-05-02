@@ -39,7 +39,7 @@
 // Ray marching
 #define MIN_THRESHOLD (0.001f)
 #define MAX_THRESHOLD 10
-#define NUM_ITERATIONS 20
+#define NUM_ITERATIONS 40
 #define K_SMOOTH (0.06f)
 #define EPS_GRAD (0.001f)
 #define EPS_BBOX (0.01f)
