@@ -39,21 +39,6 @@
 using namespace std;
 using namespace cl;
 
-// #define EPS_F (0.00001f)
-// #define MIN_R (0.1f)
-// #define MAX_R (5.0f)
-// #define LOCAL_WORK_SIZE 256
-// #define LOCAL_WORK_SIZE_X 16
-// #define LOCAL_WORK_SIZE_Y 16
-// #define SPHERE_RADIUS (0.0075f)
-// #define SPHERE_COUNT 4096
-//#define MARCH
-
-//#define OFFSET 16
-
-//#define PROFILE INFINITY
-//#define PROFILE 500
-
 typedef unsigned int uint;
 
 static const float matrix[16] =
@@ -182,6 +167,7 @@ void loadPointCloud(int index)
     // }
     //params.q.enqueueWriteBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, pointClouds[name].data());
 }
+
 
 void setScreenSize(int width, int height)
 {
@@ -656,7 +642,6 @@ int main()
 
     while (!glfwWindowShouldClose(window)) {
         auto start_fps_time = std::chrono::high_resolution_clock::now();
-
         curr_time = glfwGetTime();
         curr_time2 = glfwGetTime();
         time_diff = curr_time - prev_time;
