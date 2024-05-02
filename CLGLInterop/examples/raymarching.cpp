@@ -670,7 +670,8 @@ int main()
         // process call
 
         auto start_simulate_timestep_time = std::chrono::high_resolution_clock::now();
-        simulateTimeStep(paused ? 0 : currentTime - previousTime, cnt);
+        if (!paused)
+            simulateTimeStep(currentTime - previousTime, cnt);
 
 #ifdef PROFILE
         auto end_simulate_timestep_time = std::chrono::high_resolution_clock::now();

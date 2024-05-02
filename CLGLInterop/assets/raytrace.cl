@@ -121,8 +121,6 @@ kernel void raytrace
 
             for (uint l = 0; l < WORK_GROUP_SIZE; l++)
             {
-                float t1, t2;
-
                 // test for intersections
                 float a = dot(r.d, r.d);
                 float b = 2.0 * dot(r.o - localBuffer[l], r.d);
@@ -134,20 +132,12 @@ kernel void raytrace
                     float t_max = (-1.0 * b + sqrt(b*b - 4.0 * a * c)) / (2.0 * a);
                     if (t_max >= r.mint) 
                     {
-                        t1 = t_min;
-                        t2 = t_max;
-                        if (r.mint <= t1 && t1 <= r.maxt)
-                        {
-                            isect.t = t1;
-                        } 
-                        else if (t2 <= r.maxt) 
-                        {
-                            isect.t = t2;
-                        } 
+                        if (r.mint <= t_min && t_min <= r.maxt)
+                            isect.t = t_min;
+                        else if (t_max <= r.maxt) 
+                            isect.t = t_max;
                         else 
-                        {
                             continue;
-                        }
 
                         isect.n = normalize(r.o + (isect.t) * r.d - localBuffer[l]);
                         isect.rad = localColor[l];

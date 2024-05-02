@@ -1,14 +1,14 @@
 #ifndef GLOBALS
 #define GLOBALS
 
-#define MARCH
+//#define MARCH
 
 // Camera stuff
 #define MIN_R (0.1f)
 #define MAX_R (5.0f)
 
 // Profiling
-#define PROFILE 500
+//#define PROFILE 500
 
 // Shared between all files
 #define WORK_GROUP_SIZE 64
