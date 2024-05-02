@@ -59,8 +59,6 @@ std::map<std::string, std::pair<std::vector<float>, std::vector<float>>> read_fi
             colors[3 * i + 2] = arr[i + 5 * NUM_POINTS];
         }
         std::string name = file;
-        //name = name.substr(name.find_last_of('/') + 1);
-        //name = name.substr(0, name.length() - 4);
         name = name.substr(name.find_first_of('_') + 1);
         name = name.substr(0, name.length() - 4);
         res[name] = {positions, colors};
@@ -85,5 +83,3 @@ std::map<std::string, std::pair<std::vector<float>, std::vector<float>>> read_fi
 //     }
 //     return 0;
 // }
-
-// ln -s /Users/ralphcao/Git/Berkeley/cs-184/final-project/cs184-final-proj/point-e/point_e/examples/selected_color_pc/npy /Users/ralphcao/Git/Berkeley/cs-184/final-project/cs184-final-proj/CLGLInterop/Assets/point-cloud-300M

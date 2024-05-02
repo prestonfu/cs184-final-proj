@@ -34,24 +34,12 @@
 #include <algorithm>
 
 #include <common/read_npz.h>
+#include <assets/globals.h>
 
 using namespace std;
 using namespace cl;
 
-#define EPS_F (0.00001f)
-#define MIN_R (0.1f)
-#define MAX_R (5.0f)
-#define LOCAL_WORK_SIZE 256
-#define LOCAL_WORK_SIZE_X 16
-#define LOCAL_WORK_SIZE_Y 16
-#define SPHERE_RADIUS (0.0075f)
-#define SPHERE_COUNT 4096
-
-//#define PROFILE
-
 typedef unsigned int uint;
-
-static const uint NUM_JSETS = 9;
 
 static const float matrix[16] =
 {
@@ -79,31 +67,22 @@ static const float texcords[8] =
 
 static const uint indices[6] = {0,1,2,0,2,3};
 
-static const float CJULIA[] = {
-    -0.700f, 0.270f,
-    -0.618f, 0.000f,
-    -0.400f, 0.600f,
-     0.285f, 0.000f,
-     0.285f, 0.010f,
-     0.450f, 0.143f,
-    -0.702f,-0.384f,
-    -0.835f,-0.232f,
-    -0.800f, 0.156f,
-     0.279f, 0.000f
-};
 
 static map<string, pair<std::vector<float>, std::vector<float>>> pointClouds;
 
-static int wind_width = 1280;//640;
-static int wind_height= 960;//480;
+static int wind_width = WIND_WIDTH;
+static int wind_height= WIND_HEIGHT;
 static int const nparticles = SPHERE_COUNT;
 static int selectedIndex = -1;
 static bool paused = false;
+static bool march = false;
 
 static std::vector<int> permutation(nparticles);
 static std::vector<uint> codes(nparticles);
 static std::vector<float> spheres(3 * nparticles);
-static std::vector<float> bboxes(6 * nparticles / LOCAL_WORK_SIZE);
+static std::vector<float> bboxes(6 * nparticles / WORK_GROUP_SIZE);
+
+double total_bvh_durations = 0.0;
 
 typedef struct {
     Device d;
@@ -128,7 +107,6 @@ typedef struct {
     Buffer i; // position buffer
     Buffer v; // velocity buffer
     Buffer a; // acceleration buffer
-    //Buffer 
 } process_params;
 
 typedef struct {
@@ -166,18 +144,19 @@ void loadPointCloud(int index)
     {
         std::vector<float> data(3 * nparticles, 1);
         params.q.enqueueWriteBuffer(params.targetColor, CL_TRUE, 0, sizeof(float) * 3 * nparticles, data.data());
-        cout << "model unloaded" << endl;
+        cout << "model unloaded \n";
         return;
     }
     string name = pointCloudNames[index];
+    //name = "shrek";
     if (pointClouds.count(name) == 0)
     {
-        cout << name << " not found" << endl;
+        cout << name << " not found \n";
         return;
     }
     params.q.enqueueWriteBuffer(params.targetPos, CL_TRUE, 0, sizeof(float) * 3 * nparticles, pointClouds[name].first.data());
     params.q.enqueueWriteBuffer(params.targetColor, CL_TRUE, 0, sizeof(float) * 3 * nparticles, pointClouds[name].second.data());
-    cout << name << " loaded" << endl;
+    cout << name << " loaded \n";
     // std::vector<float> cloud = pointClouds[name];
     // for (int i = cloud.size() / 3 - 1; i > 0; i--)
     // {
@@ -295,7 +274,7 @@ static void glfw_scroll_callback(GLFWwindow* wind, double dx, double dy)
 {
     if (fabs(dy) > EPS_F)
     {
-        cam.r = clamp(cam.r + (float)dy, MIN_R, MAX_R);
+        cam.r = clamp(cam.r + (float)dy / 2, MIN_R, MAX_R);
         computeCameraPosition();
     }
 }
@@ -342,6 +321,8 @@ static void glfw_key_callback(GLFWwindow* wind, int key, int scancode, int actio
             selectedIndex = 15;    
         else if (key == GLFW_KEY_P)
             paused = !paused;  
+        else if (key == GLFW_KEY_SPACE)
+            march = !march;
         
         if (selectedIndex != curIndex)
             loadPointCloud(selectedIndex);   
@@ -352,11 +333,10 @@ static void glfw_framebuffer_size_callback(GLFWwindow* wind, int width, int heig
 {
     glViewport(0,0,width,height);
     setScreenSize(width, height);
-    //wind_width = width;
-    //wind_height = height;
 }
 
-void processTimeStep(float);
+void simulateTimeStep(float, int);
+void processTimeStep(float, int);
 void renderFrame(void);
 
 inline float radians(float angle)
@@ -369,19 +349,20 @@ inline float degrees(float radians)
     return radians * 180 / M_PI;
 }
 
+//[l, r)
 void bvh(std::vector<float> &spheres, std::vector<int> &permutation, int l, int r)
 {
-    if (r - l <= 256)
+    if (r - l <= WORK_GROUP_SIZE)
         return;
 
     float min_x = INFINITY, max_x = -INFINITY, min_y = INFINITY, max_y = -INFINITY, min_z = INFINITY, max_z = -INFINITY;
-    for (int i = 0; i < spheres.size(); i += 3) {
-        min_x = min(min_x, spheres[3 * i + 0]);
-        min_y = min(min_y, spheres[3 * i + 1]);
-        min_z = min(min_z, spheres[3 * i + 2]);
-        max_x = max(max_x, spheres[3 * i + 0]);
-        max_y = max(max_y, spheres[3 * i + 1]);
-        max_z = max(max_z, spheres[3 * i + 2]);
+    for (int i = l; i < r; i++) {
+        min_x = min(min_x, spheres[3 * permutation[i] + 0]);
+        min_y = min(min_y, spheres[3 * permutation[i] + 1]);
+        min_z = min(min_z, spheres[3 * permutation[i] + 2]);
+        max_x = max(max_x, spheres[3 * permutation[i] + 0]);
+        max_y = max(max_y, spheres[3 * permutation[i] + 1]);
+        max_z = max(max_z, spheres[3 * permutation[i] + 2]);
     }
 
     int axis_idx = 0;
@@ -423,9 +404,6 @@ int main()
     glfwWindowHint(GLFW_GREEN_BITS  , mode->greenBits  );
     glfwWindowHint(GLFW_BLUE_BITS   , mode->blueBits   );
     glfwWindowHint(GLFW_REFRESH_RATE, mode->refreshRate);
-
-    // wind_width  = mode->width;
-    // wind_height = mode->height;
 
     GLFWwindow* window;
 
@@ -497,30 +475,37 @@ int main()
         params.q = CommandQueue(context, params.d);
         
         // Set up program and kernels
+#ifdef MARCH
+        ifstream kernelFile1(ASSETS_DIR"/raymarch.cl");
+#else
         ifstream kernelFile1(ASSETS_DIR"/raytrace.cl");
+#endif
         string kernelSource1((istreambuf_iterator<char>(kernelFile1)), istreambuf_iterator<char>());
-        //ifstream kernelFile2(ASSETS_DIR"/raymarch.cl");
-        //string kernelSource2((istreambuf_iterator<char>(kernelFile2)), istreambuf_iterator<char>());
-        ifstream kernelFile3(ASSETS_DIR"/calculate.cl");
+        ifstream kernelFile2(ASSETS_DIR"/calculate.cl");
+        string kernelSource2((istreambuf_iterator<char>(kernelFile2)), istreambuf_iterator<char>());
+        ifstream kernelFile3(ASSETS_DIR"/integrate.cl");    
         string kernelSource3((istreambuf_iterator<char>(kernelFile3)), istreambuf_iterator<char>());
-        ifstream kernelFile4(ASSETS_DIR"/integrate.cl");    
+        ifstream kernelFile4(ASSETS_DIR"/globals.h");    
         string kernelSource4((istreambuf_iterator<char>(kernelFile4)), istreambuf_iterator<char>());
 
         Program::Sources sources;
-        sources.push_back({ kernelSource1.c_str(), kernelSource1.length() });
-        //sources.push_back({ kernelSource2.c_str(), kernelSource2.length() });
-        sources.push_back({ kernelSource3.c_str(), kernelSource3.length() });
         sources.push_back({ kernelSource4.c_str(), kernelSource4.length() });
+        sources.push_back({ kernelSource1.c_str(), kernelSource1.length() });
+        sources.push_back({ kernelSource2.c_str(), kernelSource2.length() });
+        sources.push_back({ kernelSource3.c_str(), kernelSource3.length() });
         params.p = Program(context, sources);
 
+        //params.p.build(std::vector<Device>(1, params.d), "-I ../assets");
         params.p.build(std::vector<Device>(1, params.d));
         params.raytrace = Kernel(params.p, "raytrace");
-        //params.raymarch = Kernel(params.p, "raymarch");
+#ifdef MARCH
+        params.raymarch = Kernel(params.p, "raymarch");
+#endif
         params.kc = Kernel(params.p, "calculate");
         params.ki = Kernel(params.p, "integrate");
 
         // create opengl stuff
-        rparams.prg = initShaders(ASSETS_DIR"/fractal.vert", ASSETS_DIR "/fractal.frag");
+        rparams.prg = initShaders(ASSETS_DIR"/render.vert", ASSETS_DIR "/render.frag");
         rparams.tex = createTexture2D(wind_width,wind_height);
         GLuint vbo  = createBuffer(12,vertices,GL_STATIC_DRAW);
         GLuint tbo  = createBuffer(8,texcords,GL_STATIC_DRAW);
@@ -584,15 +569,14 @@ int main()
         for (int i = 0; i < nparticles; i++)
             permutation[i] = i;
         params.permutation = Buffer(context, CL_MEM_READ_WRITE, sizeof(int) * nparticles);  
-        params.bboxes = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 6 * nparticles / LOCAL_WORK_SIZE);
+        params.bboxes = Buffer(context, CL_MEM_READ_WRITE, sizeof(float) * 6 * nparticles / WORK_GROUP_SIZE);
 
         std::random_device rd;
         std::mt19937 eng(rd());
         std::normal_distribution<> dist(0, 1);
-        std::vector<float> vel(3 * nparticles), accel(3 * nparticles), color(3 * nparticles);
+        std::vector<float> vel(3 * nparticles), accel(3 * nparticles, 0), color(3 * nparticles);
         for (int i = 0; i < nparticles; i++)
         {
-            accel[3 * i] = accel[3 * i + 1] = accel[3 * i + 2] = 0;
             spheres[3 * i] = dist(eng);
             spheres[3 * i + 1] = dist(eng);
             spheres[3 * i + 2] = dist(eng);
@@ -600,8 +584,7 @@ int main()
             spheres[3 * i] /= norm * 2;
             spheres[3 * i + 1] /= norm * 2;
             spheres[3 * i + 2] /= norm * 2;
-            //spheres[3 * i] = spheres[3 * i + 1] = spheres[3 * i + 2] = 0;
-            //cout << spheres[3 * i] << " " << spheres[3 * i + 1] << " " << spheres[3 * i + 2] << endl;
+
             vel[3 * i] = dist(eng);
             vel[3 * i + 1] = dist(eng);
             vel[3 * i + 2] = dist(eng);
@@ -640,57 +623,111 @@ int main()
 
     double prev_time = 0.0;
     double curr_time = 0.0;
+    double prev_time2 = 0.0;
+    double curr_time2 = 0.0;
     double time_diff;
+    double time_diff2;
     unsigned int counter = 0;
+    unsigned int counter2 = 0;
+    unsigned int cnt = 0;
 
     float previousTime = glfwGetTime();
 
+    double total_simulation_durations = 0.0;
+    double total_process_timestep_durations = 0.0;
+    double total_render_durations = 0.0;
+    double total_swap_buffer_durations = 0.0;
+    double total_poll_durations = 0.0;
+    double total_fps = 0.0;
+
     while (!glfwWindowShouldClose(window)) {
+        auto start_fps_time = std::chrono::high_resolution_clock::now();
         curr_time = glfwGetTime();
+        curr_time2 = glfwGetTime();
         time_diff = curr_time - prev_time;
+        time_diff2 = curr_time2 - prev_time2;
         counter ++;
+        counter2 ++;
+        cnt++;
         if (time_diff >= 1.0 / 30.0) 
         {
             std::string FPS = std::to_string((1.0 / time_diff) * counter).substr(0, 4);
             std::string ms = std::to_string((time_diff / counter) * 1000).substr(0, 4);
-            std::string newTitle = "MARLIN - " + FPS + "FPS / " + ms + "ms - " + (selectedIndex == -1 ? "flocking" : pointCloudNames[selectedIndex]);
+            std::string newTitle = "Boids - " + FPS + "FPS / " + ms + "ms - " + (selectedIndex == -1 ? "flocking" : pointCloudNames[selectedIndex]);
             glfwSetWindowTitle(window, newTitle.c_str());
             prev_time = curr_time;
             counter = 0;
         }
+        if (time_diff2 >= 10) {
+            std::string FPS = std::to_string((1.0 / time_diff2) * counter2);
+            std::cout << "FPS: " << FPS << "\n";
+            prev_time2 = curr_time2;
+            counter2 = 0;
+        }
+
         float currentTime = glfwGetTime();
+
         // process call
 
-        processTimeStep(paused ? 0 : currentTime - previousTime);
+        auto start_simulate_timestep_time = std::chrono::high_resolution_clock::now();
+        simulateTimeStep(paused ? 0 : currentTime - previousTime, cnt);
+
+#ifdef PROFILE
+        auto end_simulate_timestep_time = std::chrono::high_resolution_clock::now();
+        auto simulate_timestep_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_simulate_timestep_time - start_simulate_timestep_time).count();
+        total_simulation_durations += simulate_timestep_duration;
+        if (cnt % (int) PROFILE == 0) {
+            std::cout << "Simulate timestep time: " << total_simulation_durations / PROFILE << "μs \n";
+            total_simulation_durations = 0.0;
+            cnt = 0;
+        }
+#endif
+
+        auto start_process_timestep_time = std::chrono::high_resolution_clock::now();
+        processTimeStep(paused ? 0 : currentTime - previousTime, cnt);
+
+#ifdef PROFILE
+        auto end_process_timestep_time = std::chrono::high_resolution_clock::now();
+        auto process_timestep_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_process_timestep_time - start_process_timestep_time).count();
+        total_process_timestep_durations += process_timestep_duration;
+        if (cnt % (int) PROFILE == 0) {
+            std::cout << "Render timestep time: " << total_process_timestep_durations / PROFILE << "μs \n";
+            total_process_timestep_durations = 0.0;
+            cnt = 0;
+        }
+#endif
         // render call
-
-        auto start_render_time = std::chrono::high_resolution_clock::now();
         renderFrame();
-#ifdef PROFILE
-        auto end_render_time = std::chrono::high_resolution_clock::now();
-        auto render_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_render_time - start_render_time).count();
-        std::cout << "Render time: " << render_duration << "μs" << std::endl;
-#endif
 
-        // swap front and back buffers
-        auto start_swap_buffer_time = std::chrono::high_resolution_clock::now();
         glfwSwapBuffers(window);
-#ifdef PROFILE
-        auto end_swap_buffer_time = std::chrono::high_resolution_clock::now();
-        auto swap_buffer_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_swap_buffer_time - start_swap_buffer_time).count();
-        std::cout << "Swap buffer time: " << swap_buffer_duration << "μs" << std::endl;
-#endif
         
         // poll for events
         auto start_poll_time = std::chrono::high_resolution_clock::now();
         glfwPollEvents();
-#ifdef PROFILE
+
+#ifdef PROFILE  
         auto end_poll_time = std::chrono::high_resolution_clock::now();
         auto poll_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_poll_time - start_poll_time).count();
-        std::cout << "Poll time: " << poll_duration << "μs" << std::endl;
+        total_poll_durations += poll_duration;
+        if (cnt % (int) PROFILE == 0) {
+            std::cout << "Poll time: " << total_poll_durations / PROFILE << "μs\n";
+            total_poll_durations = 0.0;
+            cnt = 0;
+        }
 #endif
 
         previousTime = currentTime;
+
+#ifdef PROFILE
+        auto end_fps_time = std::chrono::high_resolution_clock::now();
+        auto fps_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_fps_time - start_fps_time).count();
+        total_fps += 1000000.0 / fps_duration;
+        if (cnt % (int) PROFILE == 0) {
+            std::cout << "FPS: " << total_fps / PROFILE << "\n";
+            total_fps = 0.0;
+            cnt = 0;
+        }
+#endif
     }
 
     glfwDestroyWindow(window);
@@ -704,39 +741,36 @@ inline unsigned divup(unsigned a, unsigned b)
     return (a+b-1)/b;
 }
 
-void processTimeStep(float deltaTime)
+void simulateTimeStep(float deltaTime, int cnt)
+{
+    NDRange local(256);
+    NDRange global(16 * divup(nparticles, 16));
+    // // set kernel arguments
+    params.kc.setArg(0, params.spheres);
+    params.kc.setArg(1, params.v);
+    params.kc.setArg(2, params.a);
+    params.kc.setArg(3, params.targetPos);
+    params.kc.setArg(4, selectedIndex);
+    local = NDRange(256);
+    global = NDRange(16 * divup(nparticles, 16));
+    params.q.enqueueNDRangeKernel(params.kc, cl::NullRange, global, local);
+    params.ki.setArg(0, params.spheres);
+    params.ki.setArg(1, params.v);
+    params.ki.setArg(2, params.a);
+    params.ki.setArg(3, params.colors);
+    params.ki.setArg(4, params.targetColor);
+    params.ki.setArg(5, deltaTime);
+    
+    auto particle_start = std::chrono::high_resolution_clock::now();
+    params.q.enqueueNDRangeKernel(params.ki, cl::NullRange, global, local);
+    params.q.finish();
+}
+
+void processTimeStep(float deltaTime, int cnt)
 {
     cl::Event ev;
     try {
-        //params.q.finish();
-        NDRange local(16);
-        NDRange global(16 * divup(nparticles, 16));
-        // // set kernel arguments
-        params.kc.setArg(0, params.spheres);
-        params.kc.setArg(1, params.v);
-        params.kc.setArg(2, params.a);
-        params.kc.setArg(3, params.targetPos);
-        params.kc.setArg(4, selectedIndex);
-        local = NDRange(16);
-        global = NDRange(16 * divup(nparticles, 16));
-        params.q.enqueueNDRangeKernel(params.kc, cl::NullRange, global, local);
-        params.ki.setArg(0, params.spheres);
-        params.ki.setArg(1, params.v);
-        params.ki.setArg(2, params.a);
-        params.ki.setArg(3, params.colors);
-        params.ki.setArg(4, params.targetColor);
-        params.ki.setArg(5, deltaTime);
-        
-        auto particle_start = std::chrono::high_resolution_clock::now();
-        params.q.enqueueNDRangeKernel(params.ki, cl::NullRange, global, local);
-        params.q.finish();
-
         glFinish();
-#ifdef PROFILE
-        auto particle_end = std::chrono::high_resolution_clock::now();
-        auto particle_duration = std::chrono::duration_cast<std::chrono::microseconds>(particle_end - particle_start).count();
-        std::cout << "Particle sim time: " << particle_duration << "μs" << std::endl;
-#endif
 
         std::vector<Memory> objs;
         objs.clear();
@@ -745,22 +779,17 @@ void processTimeStep(float deltaTime)
         cl_int res = params.q.enqueueAcquireGLObjects(&objs,NULL,&ev);
         ev.wait();
         if (res!=CL_SUCCESS) {
-            std::cout<<"Failed acquiring GL object: "<<res<<std::endl;
+            std::cout<<"Failed acquiring GL object: "<<res<< "\n";
             exit(248);
         }
         float hFov_expr = 2 * tan(0.5 * cam.hFov * M_PI / 180);
         float vFov_expr = 2 * tan(0.5 * cam.vFov * M_PI / 180);
 
-        auto bvh_start = std::chrono::high_resolution_clock::now();
+        auto start_bvh_time = std::chrono::high_resolution_clock::now();
         params.q.enqueueReadBuffer(params.spheres, CL_TRUE, 0, sizeof(float) * 3 * nparticles, spheres.data());
         params.q.finish();
 
         bvh(spheres, permutation, 0, nparticles);
-#ifdef PROFILE
-        auto bvh_end = std::chrono::high_resolution_clock::now();
-        auto bvh_duration = std::chrono::duration_cast<std::chrono::microseconds>(bvh_end - bvh_start).count();
-        std::cout << "BVH construction time: " << bvh_duration << "μs" << std::endl;
-#endif
 
         // float minx = spheres[0], miny = spheres[1], minz = spheres[2];
         // float maxx = spheres[0], maxy = spheres[1], maxz = spheres[2];
@@ -776,7 +805,7 @@ void processTimeStep(float deltaTime)
         // maxx -= minx;
         // maxy -= miny;
         // maxz -= minz;
-
+ 
         // for (int i = 0; i < nparticles; i++)
         // {
         //     codes[i] = morton3D((spheres[3 * i] - minx) / maxx, (spheres[3 * i + 1] - miny) / maxy, (spheres[3 * i + 2] - minz) / maxz);
@@ -787,15 +816,27 @@ void processTimeStep(float deltaTime)
         //     return codes[a] < codes[b];
         // });
 
+#ifdef PROFILE
+
+            auto end_bvh_time = std::chrono::high_resolution_clock::now();
+            auto bvh_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_bvh_time - start_bvh_time).count();        
+            total_bvh_durations += bvh_duration;
+            if (cnt % (int) PROFILE == 0) {
+                std::cout << "BVH construction time: " << total_bvh_durations / PROFILE << "μs\n";
+                total_bvh_durations = 0.0;
+                cnt = 0;
+            }
+#endif
+
         params.q.enqueueWriteBuffer(params.permutation, CL_TRUE, 0, sizeof(int) * nparticles, permutation.data());
 
-        for (int i = 0; i < nparticles / LOCAL_WORK_SIZE; i++)
+        for (int i = 0; i < nparticles / WORK_GROUP_SIZE; i++)
         {
             bboxes[6 * i + 0] = bboxes[6 * i + 1] = bboxes[6 * i + 2] = INFINITY;
             bboxes[6 * i + 3] = bboxes[6 * i + 4] = bboxes[6 * i + 5] = -INFINITY;
-            for (int j = 0; j < LOCAL_WORK_SIZE; j++)
+            for (int j = 0; j < WORK_GROUP_SIZE; j++)
             {
-                int index = i * LOCAL_WORK_SIZE + j;
+                int index = i * WORK_GROUP_SIZE + j;
                 for (int k = 0; k < 3; k++)
                 {
                     bboxes[6 * i + k] = min(bboxes[6 * i + k], spheres[3 * permutation[index] + k] - SPHERE_RADIUS);
@@ -803,51 +844,59 @@ void processTimeStep(float deltaTime)
                 }
             }
         }
-        params.q.enqueueWriteBuffer(params.bboxes, CL_TRUE, 0, sizeof(float) * 6 * nparticles / LOCAL_WORK_SIZE, bboxes.data());
+        params.q.enqueueWriteBuffer(params.bboxes, CL_TRUE, 0, sizeof(float) * 6 * nparticles / WORK_GROUP_SIZE, bboxes.data());
 
-        local = NDRange(LOCAL_WORK_SIZE_X, LOCAL_WORK_SIZE_Y);
-        global = NDRange( local[0] * divup(wind_width, local[0]),
+        NDRange local = NDRange(WORK_GROUP_SIZE_X, WORK_GROUP_SIZE_Y);
+        NDRange global = NDRange( local[0] * divup(wind_width, local[0]),
                         local[1] * divup(wind_height, local[1]));
         // set kernel arguments
-        int temp = -1;
-        params.raytrace.setArg(0, params.tex);
-        params.raytrace.setArg(1, wind_width);
-        params.raytrace.setArg(2, wind_height);
-        params.raytrace.setArg(3, hFov_expr);
-        params.raytrace.setArg(4, vFov_expr);
-        params.raytrace.setArg(5, params.cameraPos);
-        params.raytrace.setArg(6, temp);
-        params.raytrace.setArg(7, params.c2w);
-        params.raytrace.setArg(8, params.spheres);
-        params.raytrace.setArg(9, params.permutation);
-        params.raytrace.setArg(10, params.bboxes);
-        params.raytrace.setArg(11, params.colors);
-        params.raytrace.setArg(12, params.seed);
-        params.q.enqueueNDRangeKernel(params.raytrace, cl::NullRange, global, local);
-
-        // params.raymarch.setArg(0, params.tex);
-        // params.raymarch.setArg(1, wind_width);
-        // params.raymarch.setArg(2, wind_height);
-        // params.raymarch.setArg(3, hFov_expr);
-        // params.raymarch.setArg(4, vFov_expr);
-        // params.raymarch.setArg(5, params.cameraPos);
-        // params.raymarch.setArg(6, params.c2w);
-        // params.raymarch.setArg(7, params.spheres);
-        // params.raymarch.setArg(8, params.permutation);
-        // params.raymarch.setArg(9, params.bboxes);
-        // params.raymarch.setArg(10, params.seed);
-        // params.raymarch.setArg(11, selectedIndex);
-        // params.q.enqueueNDRangeKernel(params.raymarch, cl::NullRange, global, local);
-        // release opengl object
+#ifdef MARCH
+        if (!march)
+        {
+#endif
+            params.raytrace.setArg(0, params.tex);
+            params.raytrace.setArg(1, wind_width);
+            params.raytrace.setArg(2, wind_height);
+            params.raytrace.setArg(3, hFov_expr);
+            params.raytrace.setArg(4, vFov_expr);
+            params.raytrace.setArg(5, params.cameraPos);
+            params.raytrace.setArg(6, march ? -2 : selectedIndex);
+            params.raytrace.setArg(7, params.c2w);
+            params.raytrace.setArg(8, params.spheres);
+            params.raytrace.setArg(9, params.permutation);
+            params.raytrace.setArg(10, params.bboxes);
+            params.raytrace.setArg(11, params.colors);
+            params.raytrace.setArg(12, params.seed);
+            params.q.enqueueNDRangeKernel(params.raytrace, cl::NullRange, global, local);
+#ifdef MARCH
+        }
+        else
+        {
+            params.raymarch.setArg(0, params.tex);
+            params.raymarch.setArg(1, wind_width);
+            params.raymarch.setArg(2, wind_height);
+            params.raymarch.setArg(3, hFov_expr);
+            params.raymarch.setArg(4, vFov_expr);
+            params.raymarch.setArg(5, params.cameraPos);
+            params.raymarch.setArg(6, selectedIndex);
+            params.raymarch.setArg(7, params.c2w);
+            params.raymarch.setArg(8, params.spheres);
+            params.raymarch.setArg(9, params.permutation);
+            params.raymarch.setArg(10, params.bboxes);
+            params.raymarch.setArg(11, params.colors);
+            params.raymarch.setArg(12, params.seed);
+            params.q.enqueueNDRangeKernel(params.raymarch, cl::NullRange, global, local);
+        }
+#endif
         res = params.q.enqueueReleaseGLObjects(&objs);
         ev.wait();
         if (res!=CL_SUCCESS) {
-            std::cout<<"Failed releasing GL object: "<<res<<std::endl;
+            std::cout<<"Failed releasing GL object: "<<res<< "\n";
             exit(247);
         }
         params.q.finish();
     } catch(Error err) {
-        std::cout << err.what() << "(" << err.err() << ")" << std::endl;
+        std::cout << err.what() << "(" << err.err() << ") \n";
     }
 }
 

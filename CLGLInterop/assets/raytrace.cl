@@ -1,50 +1,24 @@
-#define SPHERE_RADIUS 0.0075
-#define SPHERE_COUNT 4096
-#define MIN_THRESHOLD (0.001f)
-#define MAX_THRESHOLD 10
-#define NUM_ITERATIONS 40
-#define WORK_GROUP_SIZE 256
-
-#define NCLIP 0
-#define FCLIP 4
-
-#define DIFFUSE_BSDF (float3)(1, 1, 1) //includes color
-#define AREA_LIGHT_POS (float3)(0, 1, 0)
-#define AREA_LIGHT_DIR (float3)(0, -1, 0)
-#define AREA_LIGHT_DIMX (float3)(0.5, 0, 0)
-#define AREA_LIGHT_DIMY (float3)(0, 0, 0.5)
-#define AREA_LIGHT_AREA 1 //make sure this matches dimx * dimy
-#define AREA_LIGHT_RADIANCE (float3)(1, 1, 1)
-
-#define GLOBAL_ILLUMINATION (float3)(0.05, 0.05, 0.05)
-
-#define NUM_RAYS 1
-#define LIGHT_SAMPLES 4
-
-#define EPS_F (0.00001f)
-#define EPS_GRAD (0.001f)
-
 #define randf(seed) ((float)(seed = (((long)(seed) * 16807) % 2147483647)) / 2147483647)
 
-// constant float3 colors[16] =
-// {
-//     (float3)(0, 0, 1),
-//     (float3)(0, 1, 0),
-//     (float3)(0, 1, 1),
-//     (float3)(1, 0, 0),
-//     (float3)(1, 0, 1),
-//     (float3)(1, 1, 0),
-//     (float3)(1, 1, 1),
-//     (float3)(0, 0.5, 0.5),
-//     (float3)(0.5, 0, 0.5),
-//     (float3)(0.5, 0.5, 0),
-//     (float3)(1, 0.5, 0),
-//     (float3)(1, 0, 0.5),
-//     (float3)(0.5, 1, 0),
-//     (float3)(0.5, 0, 1),
-//     (float3)(0, 0.5, 1),
-//     (float3)(0, 1, 0.5)
-// };
+constant float3 debugColors[16] =
+{
+    (float3)(0, 0, 1),
+    (float3)(0, 1, 0),
+    (float3)(0, 1, 1),
+    (float3)(1, 0, 0),
+    (float3)(1, 0, 1),
+    (float3)(1, 1, 0),
+    (float3)(1, 1, 1),
+    (float3)(0, 0.5, 0.5),
+    (float3)(0.5, 0, 0.5),
+    (float3)(0.5, 0.5, 0),
+    (float3)(1, 0.5, 0),
+    (float3)(1, 0, 0.5),
+    (float3)(0.5, 1, 0),
+    (float3)(0.5, 0, 1),
+    (float3)(0, 0.5, 1),
+    (float3)(0, 1, 0.5)
+};
 
 typedef struct {
     float3 o;
@@ -92,18 +66,14 @@ kernel void raytrace
 {
     local float3 localBuffer[WORK_GROUP_SIZE];
     local float3 localColor[WORK_GROUP_SIZE];
-    local ushort localFlags[WORK_GROUP_SIZE];
-    local int cnt;
+    local ulong localFlags[WORK_GROUP_SIZE];
 
     const uint xi = get_global_id(0);
     const uint yi = get_global_id(1);
     const uint lid = get_local_id(1) * get_local_size(0) + get_local_id(0);
-    //const uint localSize = get_local_size(0) * get_local_size(1);
-    // if (xi >= width || yi >= height)
-    //     return; //if we use local memory we may need these threads still to copy data
 
     uint id = yi * width + xi;
-    int seed = id;
+    int seed = seedMemory[id];
     float3 c2w_0 = (float3)(c2w[0], c2w[3], c2w[6]);
     float3 c2w_1 = (float3)(c2w[1], c2w[4], c2w[7]);
     float3 c2w_2 = (float3)(c2w[2], c2w[5], c2w[8]);
@@ -128,20 +98,17 @@ kernel void raytrace
             if (intersect_bbox(r, (float3)(bboxes[6 * k], bboxes[6 * k + 1], bboxes[6 * k + 2]), (float3)(bboxes[6 * k + 3], bboxes[6 * k + 4], bboxes[6 * k + 5])))
                 localFlags[lid] |= (1 << k);
         }
-        if (lid == 0)
-            cnt = WORK_GROUP_SIZE;
 
         barrier(CLK_LOCAL_MEM_FENCE);
 
-        ushort flags = 0;
+        ulong flags = 0;
         for (int k = 0; k < WORK_GROUP_SIZE; k++)
             flags |= localFlags[k];
 
         Intersection isect;
         isect.t = r.mint;
         isect.hit = false;
-           
-        bool hit = false;
+        
         for (int k = 0; k < SPHERE_COUNT / WORK_GROUP_SIZE; k++)
         {
             if ((flags & (1 << k)) == 0)// || (selectedIndex != -1 && k != selectedIndex))
@@ -184,6 +151,8 @@ kernel void raytrace
 
                         isect.n = normalize(r.o + (isect.t) * r.d - localBuffer[l]);
                         isect.rad = localColor[l];
+                        if (selectedIndex == -2)
+                            isect.rad = debugColors[k % 16];
                         r.maxt = isect.t;
                         isect.hit = true;
                     }
@@ -192,6 +161,54 @@ kernel void raytrace
 
             barrier(CLK_LOCAL_MEM_FENCE);
         }
+/* global ver
+        for (int k = 0; k < SPHERE_COUNT; k++)
+        {
+            if ((flags & (1 << (k / WORK_GROUP_SIZE))) == 0)// || (selectedIndex != -1 && k != selectedIndex))
+            {
+                k += WORK_GROUP_SIZE;
+                continue;
+            }
+            int index = permutation[k];
+            float3 pos = (float3)(spheres[3 * index], spheres[3 * index + 1], spheres[3 * index + 2]);
+            float3 color = (float3)(colors[3 * index], colors[3 * index + 1], colors[3 * index + 2]);
+
+            float t1, t2;
+
+            // test for intersections
+            float a = dot(r.d, r.d);
+            float b = 2.0 * dot(r.o - pos, r.d);
+            float c = dot(r.o - pos, r.o - pos) - SPHERE_RADIUS * SPHERE_RADIUS;
+
+            if (b*b - 4.0 * a * c >= 0.0)
+            {
+                float t_min = (-1.0 * b - sqrt(b*b - 4.0 * a * c)) / (2.0 * a);
+                float t_max = (-1.0 * b + sqrt(b*b - 4.0 * a * c)) / (2.0 * a);
+                if (t_max >= r.mint) 
+                {
+                    t1 = t_min;
+                    t2 = t_max;
+                    if (r.mint <= t1 && t1 <= r.maxt)
+                    {
+                        isect.t = t1;
+                    } 
+                    else if (t2 <= r.maxt) 
+                    {
+                        isect.t = t2;
+                    } 
+                    else 
+                    {
+                        continue;
+                    }
+
+                    isect.n = normalize(r.o + (isect.t) * r.d - pos);
+                    isect.rad = color;
+                    r.maxt = isect.t;
+                    isect.hit = true;
+                }
+            }
+        }
+*/
         float t = (AREA_LIGHT_POS.y - r.o.y) / r.d.y;
         float3 p = r.o + r.d * t;
         if (t > 0 && fabs(p.x) < AREA_LIGHT_DIMX.x && fabs(p.z) < AREA_LIGHT_DIMY.z)
@@ -227,15 +244,9 @@ kernel void raytrace
                 ray.mint = EPS_F;
                 ray.maxt = dist - EPS_F;
                 
-                // Intersection temp = intersect(ray, spheres);
-                // if (temp.hit)
-                //     continue;
                 if (dot(wi, isect.n) < 0)
-                {
                     continue;
-                }
                 radiance += isect.rad * rad * dot(wi, isect.n) / pdf / LIGHT_SAMPLES;
-                //radiance += DIFFUSE_BSDF * rad * dot(wi, isect.n) / pdf / LIGHT_SAMPLES;
             }
             radiance += GLOBAL_ILLUMINATION;
         }
