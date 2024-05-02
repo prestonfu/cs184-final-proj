@@ -1,41 +1,7 @@
-#define SPHERE_RADIUS 0.015
-#define SPHERE_COUNT 512
-#define WORK_GROUP_SIZE 256
-
-#define NCLIP 0
-#define FCLIP 4
-
-#define DIFFUSE_BSDF (float3)(0.6, 0.6, 0.6) //includes color
-#define AREA_LIGHT_POS (float3)(0, 1, 0)
-#define AREA_LIGHT_DIR (float3)(0, -1, 0)
-#define AREA_LIGHT_DIMX (float3)(0.25, 0, 0)
-#define AREA_LIGHT_DIMY (float3)(0, 0, 0.25)
-#define AREA_LIGHT_AREA 1 //make sure this matches dimx * dimy
-#define AREA_LIGHT_RADIANCE (float3)(1, 1, 1)
-
-#define GLOBAL_ILLUMINATION (float3)(0.05, 0.05, 0.05)
-#define GLOBAL_ILLUMINATION_M (float3)(0.2, 0.2, 0.2)
-
-#define NUM_RAYS 1
-#define LIGHT_SAMPLES 16
-#define LIGHT_SAMPLES_M 1
-
-#define EPS_F (0.00001f)
-
 #define randf(seed) ((float)(seed = (((uint)(seed) * 16807) % 2147483647)) / 2147483647)
-//#define randf(seed) ((float)(seed = abs(seed + 2147483647 / 4)) / 2147483647)
 
 #define RAY_CAMERA 0
 #define RAY_LIGHT 1
-#define RAY_BOUNCE 2
-
-#define MIN_THRESHOLD (0.001f)
-#define MAX_THRESHOLD 10
-#define NUM_ITERATIONS 20
-
-#define K_SMOOTH (0.06f)
-#define EPS_GRAD (0.001f)
-#define EPS_BBOX (0.01f)
 
 typedef struct {
     float3 o;
@@ -99,7 +65,7 @@ kernel void raytrace
     const uint lid = get_local_id(1) * get_local_size(0) + get_local_id(0);
 
     uint id = yi * width + xi;
-    int seed = id;
+    int seed = seedMemory[id];
     float3 c2w_0 = (float3)(c2w[0], c2w[3], c2w[6]);
     float3 c2w_1 = (float3)(c2w[1], c2w[4], c2w[7]);
     float3 c2w_2 = (float3)(c2w[2], c2w[5], c2w[8]);
@@ -288,14 +254,14 @@ kernel void raymarch
 )
 {
     local float3 localBuffer[WORK_GROUP_SIZE];
-    local ushort localFlags[WORK_GROUP_SIZE];
+    local ulong localFlags[WORK_GROUP_SIZE];
 
     const uint xi = get_global_id(0);
     const uint yi = get_global_id(1);
     const uint lid = get_local_id(1) * get_local_size(0) + get_local_id(0);
 
     uint id = yi * width + xi;
-    int seed = id;
+    int seed = seedMemory[id];
     float3 c2w_0 = (float3)(c2w[0], c2w[3], c2w[6]);
     float3 c2w_1 = (float3)(c2w[1], c2w[4], c2w[7]);
     float3 c2w_2 = (float3)(c2w[2], c2w[5], c2w[8]);
@@ -324,7 +290,7 @@ kernel void raymarch
 
         barrier(CLK_LOCAL_MEM_FENCE);
 
-        ushort flags = 0;
+        ulong flags = 0;
         for (int k = 0; k < WORK_GROUP_SIZE; k++)
             flags |= localFlags[k];
 

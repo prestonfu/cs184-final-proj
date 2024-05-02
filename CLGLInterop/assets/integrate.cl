@@ -35,10 +35,6 @@ kernel void integrate
 
     for (int j = 0; j < 3; j++)
         colors[3 * id + j] = (1 - deltaTime) * colors[3 * id + j] + deltaTime * targetColors[3 * id + j];
-    
-    //accelerations[3 * id] = accel.x;
-    //accelerations[3 * id + 1] = accel.y;
-    //accelerations[3 * id + 2] = accel.z;
 }
 
 /*

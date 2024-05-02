@@ -1,29 +1,3 @@
-#define SPHERE_RADIUS 0.0075
-#define SPHERE_COUNT 4096
-#define MIN_THRESHOLD (0.001f)
-#define MAX_THRESHOLD 10
-#define NUM_ITERATIONS 40
-#define WORK_GROUP_SIZE 256
-
-#define NCLIP 0
-#define FCLIP 4
-
-#define DIFFUSE_BSDF (float3)(1, 1, 1) //includes color
-#define AREA_LIGHT_POS (float3)(0, 1, 0)
-#define AREA_LIGHT_DIR (float3)(0, -1, 0)
-#define AREA_LIGHT_DIMX (float3)(0.5, 0, 0)
-#define AREA_LIGHT_DIMY (float3)(0, 0, 0.5)
-#define AREA_LIGHT_AREA 1 //make sure this matches dimx * dimy
-#define AREA_LIGHT_RADIANCE (float3)(1, 1, 1)
-
-#define GLOBAL_ILLUMINATION (float3)(0.05, 0.05, 0.05)
-
-#define NUM_RAYS 1
-#define LIGHT_SAMPLES 4
-
-#define EPS_F (0.00001f)
-#define EPS_GRAD (0.001f)
-
 #define randf(seed) ((float)(seed = (((long)(seed) * 16807) % 2147483647)) / 2147483647)
 
 constant float3 debugColors[16] =
@@ -97,12 +71,9 @@ kernel void raytrace
     const uint xi = get_global_id(0);
     const uint yi = get_global_id(1);
     const uint lid = get_local_id(1) * get_local_size(0) + get_local_id(0);
-    //const uint localSize = get_local_size(0) * get_local_size(1);
-    // if (xi >= width || yi >= height)
-    //     return; //if we use local memory we may need these threads still to copy data
 
     uint id = yi * width + xi;
-    int seed = id;
+    int seed = seedMemory[id];
     float3 c2w_0 = (float3)(c2w[0], c2w[3], c2w[6]);
     float3 c2w_1 = (float3)(c2w[1], c2w[4], c2w[7]);
     float3 c2w_2 = (float3)(c2w[2], c2w[5], c2w[8]);
@@ -273,15 +244,9 @@ kernel void raytrace
                 ray.mint = EPS_F;
                 ray.maxt = dist - EPS_F;
                 
-                // Intersection temp = intersect(ray, spheres);
-                // if (temp.hit)
-                //     continue;
                 if (dot(wi, isect.n) < 0)
-                {
                     continue;
-                }
                 radiance += isect.rad * rad * dot(wi, isect.n) / pdf / LIGHT_SAMPLES;
-                //radiance += DIFFUSE_BSDF * rad * dot(wi, isect.n) / pdf / LIGHT_SAMPLES;
             }
             radiance += GLOBAL_ILLUMINATION;
         }
